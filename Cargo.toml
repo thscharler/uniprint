@@ -1,0 +1,25 @@
+[package]
+name = "printing"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+yore = "1.0"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.52", features = [
+    "Win32",
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Graphics",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_Printing",
+    "Win32_Security",
+    "Win32_System",
+    "Win32_System_Diagnostics",
+    "Win32_System_Diagnostics_Debug",
+] }
+libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+cups-sys = "0.1.4"
