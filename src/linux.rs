@@ -1,13 +1,17 @@
 use std::ffi::{c_int, CStr, CString};
 use std::io;
 use std::io::{ErrorKind, Write};
-use std::ptr;
+use std::ptr::{self, slice_from_raw_parts};
 
+use cups_sys::ippGetInteger;
 use cups_sys::{
-    cupsCreateJob, cupsFinishDocument, cupsFreeDests, cupsGetDests, cupsLastErrorString,
-    cupsStartDocument, cupsWriteRequestData, cups_dest_t, cups_option_t,
+    cupsCheckDestSupported, cupsCopyDestInfo, cupsCreateJob, cupsFindDestReady, cupsFinishDocument,
+    cupsFreeDestInfo, cupsFreeDests, cupsGetDests, cupsLastErrorString, cupsStartDocument,
+    cupsWriteRequestData, cups_dest_t, cups_option_t,
+};
+use cups_sys::{
     http_status_e_HTTP_STATUS_CONTINUE as HTTP_STATUS_CONTINUE, http_t,
-    ipp_status_e_IPP_STATUS_OK as IPP_STATUS_OK, CUPS_FORMAT_RAW,
+    ipp_status_e_IPP_STATUS_OK as IPP_STATUS_OK, CUPS_COPIES, CUPS_FORMAT_RAW,
 };
 
 use crate::PrintError;
@@ -47,6 +51,61 @@ pub fn default_printer() -> std::io::Result<String> {
             ErrorKind::Other,
             PrintError::NoDefaultPrinter,
         ))
+    }
+}
+
+pub fn printer_attr(pr_name: &str) {
+    unsafe {
+        let mut cups_dest: *mut cups_dest_t = ptr::null_mut::<cups_dest_t>();
+        let pcups_dest = (&mut cups_dest) as *mut *mut cups_dest_t;
+
+        let n_dests = cupsGetDests(pcups_dest);
+
+        for i in 0isize..n_dests as isize {
+            let cur_dest = &mut *cups_dest.offset(i);
+
+            dbg!("21");
+
+            let c_name = CStr::from_ptr(cur_dest.name);
+            let c_instance = if !cur_dest.instance.is_null() {
+                Some(CStr::from_ptr(cur_dest.instance))
+            } else {
+                None
+            };
+            println!("{:?} {:?}", c_name, c_instance);
+
+            let c_options = &*slice_from_raw_parts(cur_dest.options, cur_dest.num_options as usize);
+            for opt in c_options {
+                let c_opt_name = CStr::from_ptr(opt.name);
+                let c_opt_value = CStr::from_ptr(opt.value);
+                println!("{:?}={:?}", c_opt_name, c_opt_value);
+            }
+
+            let dinfo = cupsCopyDestInfo(ptr::null_mut::<http_t>(), cur_dest as *mut cups_dest_t);
+
+            let copies = cupsCheckDestSupported(
+                ptr::null_mut::<http_t>(),
+                cur_dest as *mut cups_dest_t,
+                dinfo,
+                // CString::new("copies").expect("copies").as_bytes_with_nul().as_ptr() as *const i8,
+                CUPS_COPIES.as_ptr() as *const i8,
+                ptr::null(),
+            ) != 0;
+            println!("copies={}", copies);
+
+            let copies = cupsFindDestReady(
+                ptr::null_mut::<http_t>(),
+                cur_dest as *mut cups_dest_t,
+                dinfo,
+                CUPS_COPIES.as_ptr() as *const i8,
+            );
+            let copies = ippGetInteger(copies, 0);
+            println!("copies={}",copies);
+
+            cupsFreeDestInfo(dinfo);
+        }
+
+        cupsFreeDests(n_dests, cups_dest);
     }
 }
 

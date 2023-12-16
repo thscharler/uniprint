@@ -4,7 +4,7 @@ use std::fmt::{Display, Formatter};
 use std::io::Write;
 
 #[cfg(target_os = "linux")]
-pub use linux::{default_printer, list_printers};
+pub use linux::{default_printer, list_printers, printer_attr};
 #[cfg(target_os = "windows")]
 pub use windows::{default_printer, list_printers, printer_attr, Info};
 
