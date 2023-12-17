@@ -6,24 +6,31 @@
 //! https://stackoverflow.com/questions/44687154/more-complete-list-of-cups-printer-state-reasons
 
 use std::ffi::{c_int, CStr, CString};
-use std::io;
 use std::io::{ErrorKind, Write};
 use std::ptr::{self, slice_from_raw_parts};
+use std::str::FromStr;
 
-use cups_sys::ippGetInteger;
 use cups_sys::{
-    cupsCheckDestSupported, cupsCopyDestInfo, cupsCreateJob, cupsFindDestReady, cupsFinishDocument,
-    cupsFreeDestInfo, cupsFreeDests, cupsGetDests, cupsGetNamedDest, cupsLastErrorString,
-    cupsStartDocument, cupsWriteRequestData, cups_dest_t, cups_option_t,
+    cupsCreateJob, cupsFinishDocument, cupsFreeDests, cupsGetDests, 
+    cupsGetNamedDest, cupsLastErrorString, cupsStartDocument, cupsWriteRequestData,
 };
+use cups_sys::{cups_dest_t, cups_option_t};
 use cups_sys::{
     http_status_e_HTTP_STATUS_CONTINUE as HTTP_STATUS_CONTINUE, http_t,
-    ipp_status_e_IPP_STATUS_OK as IPP_STATUS_OK, CUPS_COPIES, CUPS_FORMAT_RAW,
+    ipp_status_e_IPP_STATUS_OK as IPP_STATUS_OK, CUPS_FORMAT_RAW,
 };
 
 use crate::PrintError;
 
 impl PrintError {
+    pub(crate) fn io_error(e: PrintError) -> std::io::Error {
+        std::io::Error::new(ErrorKind::Other, e)
+    }
+
+    pub(crate) fn last_io_error() -> std::io::Error {
+        std::io::Error::new(ErrorKind::Other, PrintError::last_error())
+    }
+
     /// Fetch the last error.
     pub(crate) fn last_error() -> Self {
         unsafe {
@@ -54,66 +61,37 @@ pub fn default_printer() -> std::io::Result<String> {
 
         cupsFreeDests(n_dests, cups_dest);
 
-        Err(io::Error::new(
-            ErrorKind::Other,
-            PrintError::NoDefaultPrinter,
-        ))
+        Err(PrintError::io_error(PrintError::NoDefaultPrinter))
     }
 }
 
-// printer-state
-//      "3" if the destination is idle,
-//      "4" if the destination is printing a job,
-//      "5" if the destination is stopped.
-//
-// printer-state-reasons from https://stackoverflow.com/questions/44687154/more-complete-list-of-cups-printer-state-reasons
-//
-// none
-// other
-// developer-low
-// door-open
-// fuser-over-temp
-// fuser-under-temp
-// input-tray-missing
-// interlock-open
-// interpreter-resource-unavailable
-// marker-supply-empty
-// marker-supply-low
-// marker-waste-almost-full
-// marker-waste-full
-// media-empty
-// media-jam
-// media-low
-// media-needed
-// moving-to-paused
-// opc-life-over
-// opc-near-eol
-// output-area-almost-full
-// output-area-full
-// output-tray-missing
-// paused
-// shutdown
-// spool-area-full
-// stopped-partly
-// stopping
-// timed-out
-// toner-empty
-// toner-low
-//
-// However the source code of job.c seems to also mention the following statuses (including the two mention in the question). I think this makes an exhaustive list until more come along.
-//
-// connecting-to-device
-// offline-report
-// cups-insecure-filter-warning
-// cups-missing-filter-warning
-// cups-remote-aborted
-// cups-remote-canceled
-// cups-remote-completed
-// cups-remote-pending
-// cups-remote-pending-held
-// cups-remote-processing
-// cups-remote-stopped
-// cups-waiting-for-job-completed
+#[derive(Default, Debug, Clone)]
+pub enum ColorMode {
+    #[default]
+    Auto,
+    Monochrome,
+    Color,
+}
+
+#[derive(Default, Debug, Clone)]
+pub enum Finishings {
+    #[default]
+    None,
+    Staple,
+    Punch,
+    Cover,
+    Bind,
+    Fold,
+    Trim,
+}
+
+#[derive(Default, Debug, Clone)]
+pub enum PrinterState {
+    #[default]
+    Idle,
+    Printing,
+    Stopped,
+}
 
 #[non_exhaustive]
 #[derive(Default, Debug, Clone)]
@@ -146,60 +124,77 @@ pub struct Info {
     pub job_cancel_after: u32,
     pub job_hold_until: String,
     pub job_sheets: String,
-    pub marker_change_time: u32,
+    pub marker_change_time: u64,
 
-    pub status_none: bool,
-    pub status_other: bool,
-    pub status_developer_low: bool,
-    pub status_door_open: bool,
-    pub status_fuser_over_temp: bool,
-    pub status_fuser_under_temp: bool,
-    pub status_input_tray_missing: bool,
-    pub status_interlock_open: bool,
-    pub status_interpreter_resource_unavailable: bool,
-    pub status_marker_supply_empty: bool,
-    pub status_marker_supply_low: bool,
-    pub status_waste_almost_full: bool,
-    pub status_waste_full: bool,
-    pub status_media_empty: bool,
-    pub status_media_jam: bool,
-    pub status_media_low: bool,
-    pub status_media_needed: bool,
-    pub status_moving_to_paused: bool,
-    pub status_opc_life_over: bool,
-    pub status_opc_near_eol: bool,
-    pub status_output_area_almost_full: bool,
-    pub status_output_area_full: bool,
-    pub status_output_tray_missing: bool,
-    pub status_paused: bool,
-    pub status_shutdown: bool,
-    pub status_spool_area_full: bool,
-    pub status_stopped_partly: bool,
-    pub status_stopping: bool,
-    pub status_timed_out: bool,
-    pub status_toner_empty: bool,
-    pub status_toner_low: bool,
-    pub status_connection_to_device: bool,
-    pub status_offline_report: bool,
-    pub status_insecure_filter_warning: bool,
-    pub status_missing_filter_warning: bool,
-    pub status_remote_aborted: bool,
-    pub status_remote_canceled: bool,
-    pub status_remote_completed: bool,
-    pub status_remote_pending: bool,
-    pub status_remote_pending_held: bool,
-    pub status_remote_processing: bool,
-    pub status_remote_stopped: bool,
-    pub status_waiting_for_job_completed: bool,
+    pub copies: u32,
+    pub finishings: Finishings,
+    pub number_up: u32,
+    pub print_color_mode: ColorMode,
+
+    pub printer_is_accepting_jobs: bool,
+    pub printer_is_shared: bool,
+    pub printer_is_temporary: bool,
+    pub printer_type: u32,
+
+    pub printer_state: PrinterState,
+    pub printer_state_change_time: u64,
+
+    pub state_reason_none: bool,
+    pub state_reason_other: bool,
+    pub state_reason_developer_low: bool,
+    pub state_reason_door_open: bool,
+    pub state_reason_fuser_over_temp: bool,
+    pub state_reason_fuser_under_temp: bool,
+    pub state_reason_input_tray_missing: bool,
+    pub state_reason_interlock_open: bool,
+    pub state_reason_interpreter_resource_unavailable: bool,
+    pub state_reason_marker_supply_empty: bool,
+    pub state_reason_marker_supply_low: bool,
+    pub state_reason_waste_almost_full: bool,
+    pub state_reason_waste_full: bool,
+    pub state_reason_media_empty: bool,
+    pub state_reason_media_jam: bool,
+    pub state_reason_media_low: bool,
+    pub state_reason_media_needed: bool,
+    pub state_reason_moving_to_paused: bool,
+    pub state_reason_opc_life_over: bool,
+    pub state_reason_opc_near_eol: bool,
+    pub state_reason_output_area_almost_full: bool,
+    pub state_reason_output_area_full: bool,
+    pub state_reason_output_tray_missing: bool,
+    pub state_reason_paused: bool,
+    pub state_reason_shutdown: bool,
+    pub state_reason_spool_area_full: bool,
+    pub state_reason_stopped_partly: bool,
+    pub state_reason_stopping: bool,
+    pub state_reason_timed_out: bool,
+    pub state_reason_toner_empty: bool,
+    pub state_reason_toner_low: bool,
+    pub state_reason_connection_to_device: bool,
+    pub state_reason_offline_report: bool,
+    pub state_reason_insecure_filter_warning: bool,
+    pub state_reason_missing_filter_warning: bool,
+    pub state_reason_remote_aborted: bool,
+    pub state_reason_remote_canceled: bool,
+    pub state_reason_remote_completed: bool,
+    pub state_reason_remote_pending: bool,
+    pub state_reason_remote_pending_held: bool,
+    pub state_reason_remote_processing: bool,
+    pub state_reason_remote_stopped: bool,
+    pub state_reason_waiting_for_job_completed: bool,
 }
 
-pub fn printer_attr(pr_name: &str) {
+pub fn printer_attr(pr_name: &str) -> std::io::Result<Info> {
     unsafe {
-        let cups_dest = cupsGetNamedDest(ptr::null::<http_t>(), pr_name.as_ptr(), ptr::null());
+        let cups_dest = cupsGetNamedDest(
+            ptr::null_mut::<http_t>(),
+            pr_name.as_ptr() as *const i8,
+            ptr::null(),
+        );
         if !cups_dest.is_null() {
-            let cups_dest = &*cups_dest;
+            let cups_dest = &mut *cups_dest;
 
-            let result = Info::default();
+            let mut result = Info::default();
 
             result.printer_name = CStr::from_ptr(cups_dest.name).to_string_lossy().to_string();
             result.printer_instance = if !cups_dest.instance.is_null() {
@@ -212,64 +207,272 @@ pub fn printer_attr(pr_name: &str) {
                 None
             };
 
-            let opt = cupsGetOption(
+            result.printer_uri = find_option(
                 "printer-uri-supported",
                 cups_dest.num_options,
                 cups_dest.options,
             );
 
-            let c_options = &*slice_from_raw_parts(cur_dest.options, cur_dest.num_options as usize);
+            result.device_uri = find_option("device-uri", cups_dest.num_options, cups_dest.options);
 
-            // const char *cupsGetOption(const char *name, int num_options, cups_option_t *options);
+            result.driver_name = find_option(
+                "printer-make-and-model",
+                cups_dest.num_options,
+                cups_dest.options,
+            );
 
-            for opt in c_options {
-                let c_opt_name = CStr::from_ptr(opt.name);
-                let c_opt_value = CStr::from_ptr(opt.value);
-                println!("{:?}={:?}", c_opt_name, c_opt_value);
+            result.printer_info =
+                find_option("printer-info", cups_dest.num_options, cups_dest.options);
+
+            result.printer_location =
+                find_option("printer-location", cups_dest.num_options, cups_dest.options);
+
+            result.job_priority =
+                find_num_option("job-priority", cups_dest.num_options, cups_dest.options)?;
+
+            result.job_cancel_after =
+                find_num_option("job-cancel-after", cups_dest.num_options, cups_dest.options)?;
+
+            result.job_hold_until =
+                find_option("job-hold-until", cups_dest.num_options, cups_dest.options);
+
+            result.job_sheets = find_option("job-sheets", cups_dest.num_options, cups_dest.options);
+
+            result.marker_change_time = find_num_option(
+                "marker-change-time",
+                cups_dest.num_options,
+                cups_dest.options,
+            )?;
+
+            let opt = find_option(
+                "print-color-mode",
+                cups_dest.num_options,
+                cups_dest.options,
+            );
+            result.print_color_mode = option_map(
+                &opt,
+                &[
+                    ("auto", ColorMode::Auto),
+                    ("monochrome", ColorMode::Monochrome),
+                    ("color", ColorMode::Color),
+                ],
+            );
+
+            result.copies = find_num_option(
+                "copies",
+                cups_dest.num_options,
+                cups_dest.options,
+            )?;
+
+            let opt = find_option(
+                "finishings",
+                cups_dest.num_options,
+                cups_dest.options,
+            );
+            result.finishings = option_map(
+                &opt,
+                &[
+                    ("3", Finishings::None),
+                    ("4", Finishings::Staple),
+                    ("5", Finishings::Punch),
+                    ("6", Finishings::Cover),
+                    ("7", Finishings::Bind),
+                    ("10", Finishings::Fold),
+                    ("11", Finishings::Trim),
+                ],
+            );
+
+            result.number_up = find_num_option(
+                "number-up",
+                cups_dest.num_options,
+                cups_dest.options,
+            )?;
+
+            let opt = find_option(
+                "printer-is-accepting-jobs",
+                cups_dest.num_options,
+                cups_dest.options,
+            );
+            result.printer_is_accepting_jobs = option_map(&opt, &[("true", true), ("false", false)]);
+
+            let opt = find_option(
+                "printer-is-shared",
+                cups_dest.num_options,
+                cups_dest.options,
+            );
+            result.printer_is_shared = option_map(&opt, &[("true", true), ("false", false)]);
+
+            let opt = find_option(
+                "printer-is-temporary",
+                cups_dest.num_options,
+                cups_dest.options,
+            );
+            result.printer_is_temporary = option_map(&opt, &[("true", true), ("false", false)]);
+
+            let opt = find_option(
+                "printer-state",
+                cups_dest.num_options,
+                cups_dest.options,
+            );
+            result.printer_state = option_map(
+                &opt,
+                &[
+                    ("3", PrinterState::Idle),
+                    ("4", PrinterState::Printing),
+                    ("5", PrinterState::Stopped),
+                ],
+            );
+
+            result.printer_state_change_time = find_num_option(
+                "printer-state-change-time",
+                cups_dest.num_options,
+                cups_dest.options,
+            )?;
+
+            let opt = find_option(
+                "printer-state-reasons",
+                cups_dest.num_options,
+                cups_dest.options,
+            );
+            match opt.as_str() {
+                "none" => result.state_reason_none = true,
+                "other" => result.state_reason_other = true,
+                "developer-low" => result.state_reason_developer_low = true,
+                "door-open" => result.state_reason_door_open = true,
+                "fuser-over-temp" => result.state_reason_fuser_over_temp = true,
+                "fuser-under-temp" => result.state_reason_fuser_under_temp = true,
+                "input-tray-missing" => result.state_reason_input_tray_missing = true,
+                "interlock-open" => result.state_reason_interlock_open = true,
+                "interpreter-resource-unavailable" => {
+                    result.state_reason_interpreter_resource_unavailable = true
+                }
+                "marker-supply-empty" => result.state_reason_marker_supply_empty = true,
+                "marker-supply-low" => result.state_reason_marker_supply_low = true,
+                "waste-almost-full" => result.state_reason_waste_almost_full = true,
+                "waste-full" => result.state_reason_waste_full = true,
+                "media-empty" => result.state_reason_media_empty = true,
+                "media-jam" => result.state_reason_media_jam = true,
+                "media-low" => result.state_reason_media_low = true,
+                "media-needed" => result.state_reason_media_needed = true,
+                "moving-to-paused" => result.state_reason_moving_to_paused = true,
+                "opc-life-over" => result.state_reason_opc_life_over = true,
+                "opc-near-eol" => result.state_reason_opc_near_eol = true,
+                "output-area-almost-full" => result.state_reason_output_area_almost_full = true,
+                "output-area-full" => result.state_reason_output_area_full = true,
+                "output-tray-missing" => result.state_reason_output_tray_missing = true,
+                "paused" => result.state_reason_paused = true,
+                "shutdown" => result.state_reason_shutdown = true,
+                "spool-area-full" => result.state_reason_spool_area_full = true,
+                "stopped-partly" => result.state_reason_stopped_partly = true,
+                "stopping" => result.state_reason_stopping = true,
+                "timed-out" => result.state_reason_timed_out = true,
+                "toner-empty" => result.state_reason_toner_empty = true,
+                "toner-low" => result.state_reason_toner_low = true,
+                "connection-to-device" => result.state_reason_connection_to_device = true,
+                "offline-report" => result.state_reason_offline_report = true,
+                "insecure-filter-warning" => result.state_reason_insecure_filter_warning = true,
+                "missing-filter-warning" => result.state_reason_missing_filter_warning = true,
+                "remote-aborted" => result.state_reason_remote_aborted = true,
+                "remote-canceled" => result.state_reason_remote_canceled = true,
+                "remote-completed" => result.state_reason_remote_completed = true,
+                "remote-pending" => result.state_reason_remote_pending = true,
+                "remote-pending-held" => result.state_reason_remote_pending_held = true,
+                "remote-processing" => result.state_reason_remote_processing = true,
+                "remote-stopped" => result.state_reason_remote_stopped = true,
+                "waiting-for-job-completed" => result.state_reason_waiting_for_job_completed = true,
+                _ => {}
             }
 
-            // Starting with CUPS 1.2, the returned list of destinations
-            // include the "printer-info", "printer-is-accepting-jobs",
-            // "printer-is-shared", "printer-make-and-model", "printer-state",
-            // "printer-state-change-time", "printer-state-reasons",
-            // "printer-type", and "printer-uri-supported" attributes as options.
-            //
-            //     CUPS 1.4 adds the "marker-change-time", "marker-colors",
-            // "marker-high-levels", "marker-levels", "marker-low-levels",
-            // "marker-message", "marker-names", "marker-types", and
-            // "printer-commands" attributes as options.
-            //
-            //     CUPS 2.2 adds accessible IPP printers to the list of
-            // destinations that can be used. The "printer-uri-supported"
-            // option will be present for those IPP printers that have been
-            // recently used.
+            result.printer_type = find_num_option(
+                "printer-type",
+                cups_dest.num_options,
+                cups_dest.options,
+            )?;
 
-            let dinfo = cupsCopyDestInfo(ptr::null_mut::<http_t>(), cur_dest as *mut cups_dest_t);
+            cupsFreeDests(1, cups_dest);
 
-            let copies = cupsCheckDestSupported(
-                ptr::null_mut::<http_t>(),
-                cur_dest as *mut cups_dest_t,
-                dinfo,
-                // CString::new("copies").expect("copies").as_bytes_with_nul().as_ptr() as *const i8,
-                CUPS_COPIES.as_ptr() as *const i8,
-                ptr::null(),
-            ) != 0;
-            println!("copies={}", copies);
-
-            let copies = cupsFindDestReady(
-                ptr::null_mut::<http_t>(),
-                cur_dest as *mut cups_dest_t,
-                dinfo,
-                CUPS_COPIES.as_ptr() as *const i8,
-            );
-            let copies = ippGetInteger(copies, 0);
-            println!("copies={}", copies);
-
-            cupsFreeDestInfo(dinfo);
+            Ok(result)
+        } else {
+            Err(PrintError::io_error(PrintError::NotFound))
         }
-
-        cupsFreeDests(n_dests, cups_dest);
     }
+}
+
+// future: supported and more actual values
+//
+//            let dinfo = cupsCopyDestInfo(ptr::null_mut::<http_t>(), cups_dest as *mut cups_dest_t);
+//
+//            let copies = cupsCheckDestSupported(
+//                ptr::null_mut::<http_t>(),
+//                cups_dest as *mut cups_dest_t,
+//                dinfo,
+//                // CString::new("copies").expect("copies").as_bytes_with_nul().as_ptr() as *const i8,
+//                CUPS_COPIES.as_ptr() as *const i8,
+//                ptr::null(),
+//            ) != 0;
+//            println!("copies={}", copies);
+//
+//            let copies = cupsFindDestReady(
+//                ptr::null_mut::<http_t>(),
+//                cups_dest as *mut cups_dest_t,
+//                dinfo,
+//                CUPS_COPIES.as_ptr() as *const i8,
+//            );
+//            let copies = ippGetInteger(copies, 0);
+//            println!("copies={}", copies);
+//
+//            cupsFreeDestInfo(dinfo);
+
+fn find_option(name: &str, n: i32, options: *const cups_option_t) -> String {
+    unsafe {
+        let options = &*slice_from_raw_parts(options, n as usize);
+
+        if let Ok(n) = options.binary_search_by(|v| {
+            let c_name = CStr::from_ptr(v.name);
+            c_name.to_bytes().cmp(name.as_bytes())
+        }) {
+            let c_val = CStr::from_ptr(options[n].value);
+            c_val.to_string_lossy().to_string()
+        } else {
+            String::default()
+        }
+    }
+}
+
+fn find_num_option<T>(
+    name: &str,
+    n: i32,
+    options: *const cups_option_t,
+) -> Result<T, std::io::Error>
+where
+    T: FromStr + Default,
+    <T as FromStr>::Err: Into<PrintError>,
+{
+    unsafe {
+        let options = &*slice_from_raw_parts(options, n as usize);
+
+        if let Ok(n) = options.binary_search_by(|v| {
+            let c_name = CStr::from_ptr(v.name);
+            c_name.to_bytes().cmp(name.as_bytes())
+        }) {
+            let c_val = CStr::from_ptr(options[n].value);
+            match (*c_val).to_string_lossy().parse() {
+                Ok(v) => Ok(v),
+                Err(e) => Err(PrintError::io_error(e.into())),
+            }
+        } else {
+            Ok(T::default())
+        }
+    }
+}
+
+fn option_map<T: Clone>(s: &str, opt: &[(&str, T)]) -> T {
+    for v in opt {
+        if s == v.0 {
+            return v.1.clone();
+        }
+    }
+    opt[0].1.clone() // todo: is this ok?
 }
 
 /// List installed printers.
@@ -313,7 +516,7 @@ impl Write for LinuxPrintJob {
                 buf.len(),
             ) != HTTP_STATUS_CONTINUE
             {
-                Err(io::Error::new(ErrorKind::Other, PrintError::last_error()))
+                Err(PrintError::last_io_error())
             } else {
                 Ok(buf.len())
             }
@@ -351,10 +554,7 @@ impl LinuxPrintJob {
                 ptr::null_mut::<cups_option_t>(),
             );
             if job.job_id == 0 {
-                return Err(std::io::Error::new(
-                    ErrorKind::Other,
-                    PrintError::last_error(),
-                ));
+                return Err(PrintError::last_io_error());
             }
 
             if cupsStartDocument(
@@ -366,7 +566,7 @@ impl LinuxPrintJob {
                 1,
             ) != HTTP_STATUS_CONTINUE
             {
-                Err(io::Error::new(ErrorKind::Other, PrintError::last_error()))
+                Err(PrintError::last_io_error())
             } else {
                 Ok(job)
             }
@@ -381,7 +581,7 @@ impl LinuxPrintJob {
             {
                 Ok(())
             } else {
-                Err(io::Error::new(ErrorKind::Other, PrintError::last_error()))
+                Err(PrintError::last_io_error())
             }
         }
     }

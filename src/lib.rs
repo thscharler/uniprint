@@ -2,6 +2,7 @@ use std::error::Error;
 use std::ffi::NulError;
 use std::fmt::{Display, Formatter};
 use std::io::Write;
+use std::num::ParseIntError;
 
 #[cfg(target_os = "linux")]
 pub use linux::{default_printer, list_printers, printer_attr};
@@ -115,12 +116,14 @@ impl Job for PrintJob {
 pub enum PrintError {
     /// Error from the printing system.
     Print(String),
+    /// Printer not found.
+    NotFound,
     /// No default printer.
     NoDefaultPrinter,
     /// C string conversion error.
     InteriorNulInCStr,
-    /// Printer not found.
-    NotFound,
+    /// ParseIntError
+    ParseIntError,
 }
 
 impl Error for PrintError {}
@@ -129,9 +132,10 @@ impl Display for PrintError {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self {
             PrintError::Print(v) => write!(f, "{}", v),
+            PrintError::NotFound => write!(f, "Printer not found."),
             PrintError::NoDefaultPrinter => write!(f, "No default printer."),
             PrintError::InteriorNulInCStr => write!(f, "Invalid NUL found."),
-            PrintError::NotFound => write!(f, "Printer not found."),
+            PrintError::ParseIntError => write!(f, "Parse int error."),
         }
     }
 }
@@ -139,5 +143,11 @@ impl Display for PrintError {
 impl From<NulError> for PrintError {
     fn from(_: NulError) -> Self {
         PrintError::InteriorNulInCStr
+    }
+}
+
+impl From<ParseIntError> for PrintError {
+    fn from(_: ParseIntError) -> Self {
+        PrintError::ParseIntError
     }
 }
