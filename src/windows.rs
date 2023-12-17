@@ -17,32 +17,32 @@ use windows_sys::Win32::Graphics::Gdi::{
     DM_PAPERSIZE, DM_PAPERWIDTH, DM_PRINTQUALITY, DM_SCALE, DM_TTOPTION, DM_YRESOLUTION,
 };
 use windows_sys::Win32::Graphics::Printing::{
-    ClosePrinter, EndDocPrinter, EndPagePrinter, EnumPrintersW, GetDefaultPrinterW, OpenPrinterW,
-    StartDocPrinterW, StartPagePrinter, WritePrinter, DOC_INFO_1W, PRINTER_ATTRIBUTE_DEFAULT,
-    PRINTER_ATTRIBUTE_DIRECT, PRINTER_ATTRIBUTE_DO_COMPLETE_FIRST, PRINTER_ATTRIBUTE_ENABLE_BIDI,
-    PRINTER_ATTRIBUTE_ENABLE_DEVQ, PRINTER_ATTRIBUTE_ENTERPRISE_CLOUD, PRINTER_ATTRIBUTE_FAX,
-    PRINTER_ATTRIBUTE_FRIENDLY_NAME, PRINTER_ATTRIBUTE_HIDDEN, PRINTER_ATTRIBUTE_KEEPPRINTEDJOBS,
-    PRINTER_ATTRIBUTE_LOCAL, PRINTER_ATTRIBUTE_MACHINE, PRINTER_ATTRIBUTE_NETWORK,
-    PRINTER_ATTRIBUTE_PER_USER, PRINTER_ATTRIBUTE_PUBLISHED, PRINTER_ATTRIBUTE_PUSHED_MACHINE,
-    PRINTER_ATTRIBUTE_PUSHED_USER, PRINTER_ATTRIBUTE_QUEUED, PRINTER_ATTRIBUTE_RAW_ONLY,
-    PRINTER_ATTRIBUTE_SHARED, PRINTER_ATTRIBUTE_TS, PRINTER_ATTRIBUTE_TS_GENERIC_DRIVER,
-    PRINTER_ATTRIBUTE_WORK_OFFLINE, PRINTER_ENUM_LOCAL, PRINTER_INFO_2W, PRINTER_INFO_4W,
-    PRINTER_STATUS_BUSY, PRINTER_STATUS_DOOR_OPEN, PRINTER_STATUS_ERROR,
-    PRINTER_STATUS_INITIALIZING, PRINTER_STATUS_IO_ACTIVE, PRINTER_STATUS_MANUAL_FEED,
-    PRINTER_STATUS_NOT_AVAILABLE, PRINTER_STATUS_NO_TONER, PRINTER_STATUS_OFFLINE,
-    PRINTER_STATUS_OUTPUT_BIN_FULL, PRINTER_STATUS_OUT_OF_MEMORY, PRINTER_STATUS_PAGE_PUNT,
-    PRINTER_STATUS_PAPER_JAM, PRINTER_STATUS_PAPER_OUT, PRINTER_STATUS_PAPER_PROBLEM,
-    PRINTER_STATUS_PAUSED, PRINTER_STATUS_PENDING_DELETION, PRINTER_STATUS_POWER_SAVE,
-    PRINTER_STATUS_PRINTING, PRINTER_STATUS_PROCESSING, PRINTER_STATUS_SERVER_UNKNOWN,
-    PRINTER_STATUS_TONER_LOW, PRINTER_STATUS_USER_INTERVENTION, PRINTER_STATUS_WAITING,
-    PRINTER_STATUS_WARMING_UP,
+    ClosePrinter, EndDocPrinter, EndPagePrinter, EnumPrintersW, GetDefaultPrinterW, GetPrinterW,
+    OpenPrinterW, StartDocPrinterW, StartPagePrinter, WritePrinter, DOC_INFO_1W,
+    PRINTER_ATTRIBUTE_DEFAULT, PRINTER_ATTRIBUTE_DIRECT, PRINTER_ATTRIBUTE_DO_COMPLETE_FIRST,
+    PRINTER_ATTRIBUTE_ENABLE_BIDI, PRINTER_ATTRIBUTE_ENABLE_DEVQ,
+    PRINTER_ATTRIBUTE_ENTERPRISE_CLOUD, PRINTER_ATTRIBUTE_FAX, PRINTER_ATTRIBUTE_FRIENDLY_NAME,
+    PRINTER_ATTRIBUTE_HIDDEN, PRINTER_ATTRIBUTE_KEEPPRINTEDJOBS, PRINTER_ATTRIBUTE_LOCAL,
+    PRINTER_ATTRIBUTE_MACHINE, PRINTER_ATTRIBUTE_NETWORK, PRINTER_ATTRIBUTE_PER_USER,
+    PRINTER_ATTRIBUTE_PUBLISHED, PRINTER_ATTRIBUTE_PUSHED_MACHINE, PRINTER_ATTRIBUTE_PUSHED_USER,
+    PRINTER_ATTRIBUTE_QUEUED, PRINTER_ATTRIBUTE_RAW_ONLY, PRINTER_ATTRIBUTE_SHARED,
+    PRINTER_ATTRIBUTE_TS, PRINTER_ATTRIBUTE_TS_GENERIC_DRIVER, PRINTER_ATTRIBUTE_WORK_OFFLINE,
+    PRINTER_ENUM_LOCAL, PRINTER_INFO_2W, PRINTER_INFO_4W, PRINTER_STATUS_BUSY,
+    PRINTER_STATUS_DOOR_OPEN, PRINTER_STATUS_ERROR, PRINTER_STATUS_INITIALIZING,
+    PRINTER_STATUS_IO_ACTIVE, PRINTER_STATUS_MANUAL_FEED, PRINTER_STATUS_NOT_AVAILABLE,
+    PRINTER_STATUS_NO_TONER, PRINTER_STATUS_OFFLINE, PRINTER_STATUS_OUTPUT_BIN_FULL,
+    PRINTER_STATUS_OUT_OF_MEMORY, PRINTER_STATUS_PAGE_PUNT, PRINTER_STATUS_PAPER_JAM,
+    PRINTER_STATUS_PAPER_OUT, PRINTER_STATUS_PAPER_PROBLEM, PRINTER_STATUS_PAUSED,
+    PRINTER_STATUS_PENDING_DELETION, PRINTER_STATUS_POWER_SAVE, PRINTER_STATUS_PRINTING,
+    PRINTER_STATUS_PROCESSING, PRINTER_STATUS_SERVER_UNKNOWN, PRINTER_STATUS_TONER_LOW,
+    PRINTER_STATUS_USER_INTERVENTION, PRINTER_STATUS_WAITING, PRINTER_STATUS_WARMING_UP,
 };
 use windows_sys::Win32::System::Diagnostics::Debug::{
     FormatMessageW, FORMAT_MESSAGE_ALLOCATE_BUFFER, FORMAT_MESSAGE_FROM_SYSTEM,
     FORMAT_MESSAGE_IGNORE_INSERTS,
 };
 
-use crate::PrintError;
+use crate::{PrintError, Status};
 
 extern "C" {
     pub fn wcscmp(__s1: *const wchar_t, __s2: *const wchar_t) -> ::libc::c_int;
@@ -50,6 +50,14 @@ extern "C" {
 }
 
 impl PrintError {
+    pub(crate) fn io_error(e: PrintError) -> std::io::Error {
+        std::io::Error::new(ErrorKind::Other, e)
+    }
+
+    pub(crate) fn last_io_error() -> std::io::Error {
+        std::io::Error::new(ErrorKind::Other, PrintError::last_error())
+    }
+
     /// Fetch and format the last error.
     pub(crate) fn last_error() -> Self {
         unsafe {
@@ -114,22 +122,56 @@ pub fn default_printer() -> std::io::Result<String> {
     }
 }
 
+#[non_exhaustive]
 #[derive(Default, Debug, Clone)]
 pub struct Info {
-    pub server_name: Option<String>,
-    pub port_name: Option<String>,
-    pub driver_name: Option<String>,
-    pub comment: Option<String>,
-    pub location: Option<String>,
-    pub sep_file: Option<String>,
-    pub print_processor: Option<String>,
-    pub data_type: Option<String>,
-    pub parameters: Option<String>,
+    // -- common --
+    /// CUPS: name
+    /// WIN: pPrinterName
+    pub printer_name: String,
+    /// CUPS: printer-uri-supported
+    /// WIN: \\\\pserverName\\pPrinterName
+    pub printer_uri: String,
+    /// CUPS: device-uri
+    /// WIN: pPortName
+    pub device_uri: String,
+    /// CUPS: printer-make-and-model
+    /// WIN: pDriverName
+    pub driver_name: String,
+    /// CUPS: printer-info
+    /// WIN: comment
+    pub printer_info: String,
+    /// CUPS: printer-location
+    /// WIN: location
+    pub printer_location: String,
+    /// CUPS: job-priority
+    /// WIN: DefaultPriority
+    pub job_priority: u32,
 
-    pub default_priority: u32,
+    // -- win-api --
+    /// WIN: pServerName
+    pub server_name: String,
+    /// WIN: pPortName
+    pub port_name: String,
+    /// WIN: pComment
+    pub comment: String,
+    /// WIN: pLocation
+    pub location: String,
+    /// WIN: pSepFile
+    pub sep_file: String,
+    /// WIN: pPrintProcessor
+    pub print_processor: String,
+    /// WIN: pDataType
+    pub data_type: String,
+    /// WIN: pParameters
+    pub parameters: String,
+    /// WIN: StartTime
     pub start_time: u32,
+    /// WIN: UntilTime
     pub until_time: u32,
+    /// WIN: cJobs
     pub jobs: u32,
+    /// WIN: AveragePPM
     pub average_ppm: u32,
 
     pub attr_queued: bool,
@@ -205,6 +247,44 @@ pub struct Info {
     pub device_dither_type: Option<u32>,
 }
 
+impl Info {
+    pub fn status(&self) -> Status {
+        if self.status_busy
+            || self.status_printing
+            || self.status_initializing
+            || self.status_io_active
+            || self.status_processing
+            || self.status_waiting
+            || self.status_warming_up
+        {
+            Status::Busy
+        } else if self.status_offline || self.status_paused || self.status_power_save {
+            Status::Stopped
+        } else if self.status_toner_low
+            || self.status_manual_feed
+            || self.status_output_bin_full
+            || self.status_paper_out
+            || self.status_paper_problem
+            || self.status_user_intervention
+        {
+            Status::Warn
+        } else if self.status_door_open
+            || self.status_error
+            || self.status_no_toner
+            || self.status_not_available
+            || self.status_out_of_memory
+            || self.status_page_punt
+            || self.status_paper_jam
+            || self.status_pending_deletion
+            || self.status_server_unknown
+        {
+            Status::Error
+        } else {
+            Status::Idle
+        }
+    }
+}
+
 /// Extended attributes
 pub fn printer_attr(pr_name: &str) -> std::io::Result<Info> {
     let pr_name = OsString::from(pr_name)
@@ -213,218 +293,192 @@ pub fn printer_attr(pr_name: &str) -> std::io::Result<Info> {
         .collect::<Vec<u16>>();
 
     unsafe {
+        let mut pr_handle = 0;
         let mut cb_needed = 0u32;
-        let mut c_returned = 0u32;
 
-        if EnumPrintersW(
-            PRINTER_ENUM_LOCAL,
-            ptr::null_mut(),
-            2,
-            ptr::null_mut(),
-            0,
-            &mut cb_needed as *mut u32,
-            &mut c_returned as *mut u32,
-        ) == FALSE
-        {
-            let info_layout = Layout::from_size_align_unchecked(
-                cb_needed as usize,
-                align_of::<PRINTER_INFO_2W>(),
-            );
-            let buf = alloc_zeroed(info_layout);
-
-            if EnumPrintersW(
-                PRINTER_ENUM_LOCAL,
-                ptr::null_mut(),
-                2,
-                buf,
-                cb_needed,
-                &mut cb_needed as *mut u32,
-                &mut c_returned as *mut u32,
-            ) == TRUE
-            {
-                let mut result = None;
-
-                for i in 0..c_returned as isize {
-                    let info = &*(buf as *mut PRINTER_INFO_2W).offset(i);
-
-                    if 0 == wcscmp(info.pPrinterName, pr_name.as_ptr()) {
-                        let mut res = Info::default();
-
-                        res.server_name = extract_wstr(info.pServerName);
-                        res.port_name = extract_wstr(info.pPortName);
-                        res.driver_name = extract_wstr(info.pDriverName);
-                        res.comment = extract_wstr(info.pComment);
-                        res.location = extract_wstr(info.pLocation);
-                        res.sep_file = extract_wstr(info.pSepFile);
-                        res.print_processor = extract_wstr(info.pPrintProcessor);
-                        res.data_type = extract_wstr(info.pDatatype);
-                        res.parameters = extract_wstr(info.pParameters);
-                        res.default_priority = info.DefaultPriority;
-                        res.start_time = info.StartTime;
-                        res.until_time = info.UntilTime;
-
-                        res.attr_queued = (info.Attributes & PRINTER_ATTRIBUTE_QUEUED) != 0;
-                        res.attr_direct = (info.Attributes & PRINTER_ATTRIBUTE_DIRECT) != 0;
-                        res.attr_default = (info.Attributes & PRINTER_ATTRIBUTE_DEFAULT) != 0;
-                        res.attr_network = (info.Attributes & PRINTER_ATTRIBUTE_NETWORK) != 0;
-                        res.attr_shared = (info.Attributes & PRINTER_ATTRIBUTE_SHARED) != 0;
-                        res.attr_hidden = (info.Attributes & PRINTER_ATTRIBUTE_HIDDEN) != 0;
-                        res.attr_local = (info.Attributes & PRINTER_ATTRIBUTE_LOCAL) != 0;
-                        res.attr_enable_devq =
-                            (info.Attributes & PRINTER_ATTRIBUTE_ENABLE_DEVQ) != 0;
-                        res.attr_keep_printed_jobs =
-                            (info.Attributes & PRINTER_ATTRIBUTE_KEEPPRINTEDJOBS) != 0;
-                        res.attr_do_complete_first =
-                            (info.Attributes & PRINTER_ATTRIBUTE_DO_COMPLETE_FIRST) != 0;
-                        res.attr_work_offline =
-                            (info.Attributes & PRINTER_ATTRIBUTE_WORK_OFFLINE) != 0;
-                        res.attr_enable_bidi =
-                            (info.Attributes & PRINTER_ATTRIBUTE_ENABLE_BIDI) != 0;
-                        res.attr_raw_only = (info.Attributes & PRINTER_ATTRIBUTE_RAW_ONLY) != 0;
-                        res.attr_published = (info.Attributes & PRINTER_ATTRIBUTE_PUBLISHED) != 0;
-                        res.attr_fax = (info.Attributes & PRINTER_ATTRIBUTE_FAX) != 0;
-                        res.attr_ts = (info.Attributes & PRINTER_ATTRIBUTE_TS) != 0;
-                        res.attr_pushed_user =
-                            (info.Attributes & PRINTER_ATTRIBUTE_PUSHED_USER) != 0;
-                        res.attr_pushed_machine =
-                            (info.Attributes & PRINTER_ATTRIBUTE_PUSHED_MACHINE) != 0;
-                        res.attr_machine = (info.Attributes & PRINTER_ATTRIBUTE_MACHINE) != 0;
-                        res.attr_friendly_name =
-                            (info.Attributes & PRINTER_ATTRIBUTE_FRIENDLY_NAME) != 0;
-                        res.attr_ts_generic_driver =
-                            (info.Attributes & PRINTER_ATTRIBUTE_TS_GENERIC_DRIVER) != 0;
-                        res.attr_per_user = (info.Attributes & PRINTER_ATTRIBUTE_PER_USER) != 0;
-                        res.attr_enterprise_cloud =
-                            (info.Attributes & PRINTER_ATTRIBUTE_ENTERPRISE_CLOUD) != 0;
-
-                        res.status_busy = (info.Status & PRINTER_STATUS_BUSY) != 0;
-                        res.status_door_open = (info.Status & PRINTER_STATUS_DOOR_OPEN) != 0;
-                        res.status_error = (info.Status & PRINTER_STATUS_ERROR) != 0;
-                        res.status_initializing = (info.Status & PRINTER_STATUS_INITIALIZING) != 0;
-                        res.status_io_active = (info.Status & PRINTER_STATUS_IO_ACTIVE) != 0;
-                        res.status_manual_feed = (info.Status & PRINTER_STATUS_MANUAL_FEED) != 0;
-                        res.status_no_toner = (info.Status & PRINTER_STATUS_NO_TONER) != 0;
-                        res.status_not_available =
-                            (info.Status & PRINTER_STATUS_NOT_AVAILABLE) != 0;
-                        res.status_offline = (info.Status & PRINTER_STATUS_OFFLINE) != 0;
-                        res.status_out_of_memory =
-                            (info.Status & PRINTER_STATUS_OUT_OF_MEMORY) != 0;
-                        res.status_output_bin_full =
-                            (info.Status & PRINTER_STATUS_OUTPUT_BIN_FULL) != 0;
-                        res.status_page_punt = (info.Status & PRINTER_STATUS_PAGE_PUNT) != 0;
-                        res.status_paper_jam = (info.Status & PRINTER_STATUS_PAPER_JAM) != 0;
-                        res.status_paper_out = (info.Status & PRINTER_STATUS_PAPER_OUT) != 0;
-                        res.status_paper_problem =
-                            (info.Status & PRINTER_STATUS_PAPER_PROBLEM) != 0;
-                        res.status_paused = (info.Status & PRINTER_STATUS_PAUSED) != 0;
-                        res.status_pending_deletion =
-                            (info.Status & PRINTER_STATUS_PENDING_DELETION) != 0;
-                        res.status_power_save = (info.Status & PRINTER_STATUS_POWER_SAVE) != 0;
-                        res.status_printing = (info.Status & PRINTER_STATUS_PRINTING) != 0;
-                        res.status_processing = (info.Status & PRINTER_STATUS_PROCESSING) != 0;
-                        res.status_server_unknown =
-                            (info.Status & PRINTER_STATUS_SERVER_UNKNOWN) != 0;
-                        res.status_toner_low = (info.Status & PRINTER_STATUS_TONER_LOW) != 0;
-                        res.status_user_intervention =
-                            (info.Status & PRINTER_STATUS_USER_INTERVENTION) != 0;
-                        res.status_waiting = (info.Status & PRINTER_STATUS_WAITING) != 0;
-                        res.status_warming_up = (info.Status & PRINTER_STATUS_WARMING_UP) != 0;
-
-                        let dev_mode = &*info.pDevMode;
-                        res.device_driver_version = dev_mode.dmDriverVersion;
-
-                        if 0 != dev_mode.dmFields & DM_ORIENTATION {
-                            res.device_orientation =
-                                Some(dev_mode.Anonymous1.Anonymous1.dmOrientation);
-                        }
-                        if 0 != dev_mode.dmFields & DM_PAPERSIZE {
-                            res.device_paper_size =
-                                Some(dev_mode.Anonymous1.Anonymous1.dmPaperSize);
-                        }
-                        if 0 != dev_mode.dmFields & DM_PAPERLENGTH {
-                            res.device_paper_length =
-                                Some(dev_mode.Anonymous1.Anonymous1.dmPaperLength);
-                        }
-                        if 0 != dev_mode.dmFields & DM_PAPERWIDTH {
-                            res.device_paper_width =
-                                Some(dev_mode.Anonymous1.Anonymous1.dmPaperWidth);
-                        }
-                        if 0 != dev_mode.dmFields & DM_SCALE {
-                            res.device_paper_scale = Some(dev_mode.Anonymous1.Anonymous1.dmScale);
-                        }
-                        if 0 != dev_mode.dmFields & DM_COPIES {
-                            res.device_paper_copies = Some(dev_mode.Anonymous1.Anonymous1.dmCopies);
-                        }
-                        if 0 != dev_mode.dmFields & DM_DEFAULTSOURCE {
-                            res.device_default_source =
-                                Some(dev_mode.Anonymous1.Anonymous1.dmDefaultSource);
-                        }
-                        if 0 != dev_mode.dmFields & DM_PRINTQUALITY {
-                            res.device_print_quality =
-                                Some(dev_mode.Anonymous1.Anonymous1.dmPrintQuality);
-                        }
-                        if 0 != dev_mode.dmFields & DM_COLOR {
-                            res.device_color = Some(dev_mode.dmColor);
-                        }
-                        if 0 != dev_mode.dmFields & DM_DUPLEX {
-                            res.device_duplex = Some(dev_mode.dmDuplex);
-                        }
-                        if 0 != dev_mode.dmFields & DM_YRESOLUTION {
-                            res.device_y_resolution = Some(dev_mode.dmYResolution);
-                        }
-                        if 0 != dev_mode.dmFields & DM_TTOPTION {
-                            res.device_tt_option = Some(dev_mode.dmTTOption);
-                        }
-                        if 0 != dev_mode.dmFields & DM_COLLATE {
-                            res.device_collate = Some(dev_mode.dmCollate);
-                        }
-
-                        if 0 != dev_mode.dmFields & DM_FORMNAME {
-                            let p_form_name = &dev_mode.dmFormName as *const u16;
-                            let len = min(CCHFORMNAME as usize, wcslen(p_form_name) as usize);
-                            let slice = slice_from_raw_parts(p_form_name, len);
-                            let str = OsString::from_wide(&*slice);
-                            res.device_form_name = Some(str.to_string_lossy().to_string());
-                        }
-                        if 0 != dev_mode.dmFields & DM_NUP {
-                            res.device_n_up = Some(dev_mode.Anonymous2.dmNup);
-                        }
-                        if 0 != dev_mode.dmFields & DM_ICMMETHOD {
-                            res.device_icm_method = Some(dev_mode.dmICMMethod);
-                        }
-                        if 0 != dev_mode.dmFields & DM_ICMINTENT {
-                            res.device_icm_intent = Some(dev_mode.dmICMIntent);
-                        }
-                        if 0 != dev_mode.dmFields & DM_MEDIATYPE {
-                            res.device_media_type = Some(dev_mode.dmMediaType);
-                        }
-                        if 0 != dev_mode.dmFields & DM_DITHERTYPE {
-                            res.device_dither_type = Some(dev_mode.dmDitherType);
-                        }
-
-                        result = Some(res);
-                        break;
-                    }
-                }
-
-                dealloc(buf, info_layout);
-
-                if let Some(result) = result {
-                    return Ok(result);
-                } else {
-                    return Err(std::io::Error::new(ErrorKind::Other, PrintError::NotFound));
-                }
-            } else {
-                dealloc(buf, info_layout);
-
-                return Err(std::io::Error::new(
-                    ErrorKind::Other,
-                    PrintError::last_error(),
-                ));
-            }
-        } else {
-            unreachable!()
+        if OpenPrinterW(pr_name.as_ptr(), &mut pr_handle as *mut HANDLE, ptr::null()) == 0 {
+            dbg!(0);
+            return Err(PrintError::last_io_error());
         }
+
+        let result =
+            if GetPrinterW(pr_handle, 2, ptr::null_mut(), 0, &mut cb_needed as *mut u32) == 0 {
+                let info_layout = Layout::from_size_align_unchecked(
+                    cb_needed as usize,
+                    align_of::<PRINTER_INFO_2W>(),
+                );
+                let buf = alloc_zeroed(info_layout);
+
+                let result =
+                    if GetPrinterW(pr_handle, 2, buf, cb_needed, &mut cb_needed as *mut u32) != 0 {
+                        Ok(copy_info(&*(buf as *mut PRINTER_INFO_2W)))
+                    } else {
+                        dbg!(1);
+                        Err(PrintError::last_io_error())
+                    };
+
+                dealloc(buf, info_layout);
+
+                result
+            } else {
+                unreachable!()
+            };
+
+        if ClosePrinter(pr_handle) == FALSE {
+            dbg!(2);
+            return Err(PrintError::last_io_error());
+        }
+
+        result
+    }
+}
+
+fn copy_info(info: &PRINTER_INFO_2W) -> Info {
+    unsafe {
+        let mut res = Info::default();
+
+        res.printer_name = extract_wstr(info.pPrinterName);
+        res.printer_uri = if res.server_name.is_empty() {
+            format!("\\\\.\\{}", res.printer_name).to_string()
+        } else {
+            format!("\\\\{}\\{}", res.server_name, res.printer_name).to_string()
+        };
+        res.device_uri = res.port_name.clone();
+        res.driver_name = extract_wstr(info.pDriverName);
+        res.printer_info = extract_wstr(info.pComment);
+        res.printer_location = extract_wstr(info.pLocation);
+        res.job_priority = info.DefaultPriority;
+
+        res.server_name = extract_wstr(info.pServerName);
+        res.port_name = extract_wstr(info.pPortName);
+        res.comment = extract_wstr(info.pComment);
+        res.location = extract_wstr(info.pLocation);
+        res.sep_file = extract_wstr(info.pSepFile);
+        res.print_processor = extract_wstr(info.pPrintProcessor);
+        res.data_type = extract_wstr(info.pDatatype);
+        res.parameters = extract_wstr(info.pParameters);
+        res.start_time = info.StartTime;
+        res.until_time = info.UntilTime;
+        res.jobs = info.cJobs;
+        res.average_ppm = info.AveragePPM;
+
+        res.attr_queued = (info.Attributes & PRINTER_ATTRIBUTE_QUEUED) != 0;
+        res.attr_direct = (info.Attributes & PRINTER_ATTRIBUTE_DIRECT) != 0;
+        res.attr_default = (info.Attributes & PRINTER_ATTRIBUTE_DEFAULT) != 0;
+        res.attr_network = (info.Attributes & PRINTER_ATTRIBUTE_NETWORK) != 0;
+        res.attr_shared = (info.Attributes & PRINTER_ATTRIBUTE_SHARED) != 0;
+        res.attr_hidden = (info.Attributes & PRINTER_ATTRIBUTE_HIDDEN) != 0;
+        res.attr_local = (info.Attributes & PRINTER_ATTRIBUTE_LOCAL) != 0;
+        res.attr_enable_devq = (info.Attributes & PRINTER_ATTRIBUTE_ENABLE_DEVQ) != 0;
+        res.attr_keep_printed_jobs = (info.Attributes & PRINTER_ATTRIBUTE_KEEPPRINTEDJOBS) != 0;
+        res.attr_do_complete_first = (info.Attributes & PRINTER_ATTRIBUTE_DO_COMPLETE_FIRST) != 0;
+        res.attr_work_offline = (info.Attributes & PRINTER_ATTRIBUTE_WORK_OFFLINE) != 0;
+        res.attr_enable_bidi = (info.Attributes & PRINTER_ATTRIBUTE_ENABLE_BIDI) != 0;
+        res.attr_raw_only = (info.Attributes & PRINTER_ATTRIBUTE_RAW_ONLY) != 0;
+        res.attr_published = (info.Attributes & PRINTER_ATTRIBUTE_PUBLISHED) != 0;
+        res.attr_fax = (info.Attributes & PRINTER_ATTRIBUTE_FAX) != 0;
+        res.attr_ts = (info.Attributes & PRINTER_ATTRIBUTE_TS) != 0;
+        res.attr_pushed_user = (info.Attributes & PRINTER_ATTRIBUTE_PUSHED_USER) != 0;
+        res.attr_pushed_machine = (info.Attributes & PRINTER_ATTRIBUTE_PUSHED_MACHINE) != 0;
+        res.attr_machine = (info.Attributes & PRINTER_ATTRIBUTE_MACHINE) != 0;
+        res.attr_friendly_name = (info.Attributes & PRINTER_ATTRIBUTE_FRIENDLY_NAME) != 0;
+        res.attr_ts_generic_driver = (info.Attributes & PRINTER_ATTRIBUTE_TS_GENERIC_DRIVER) != 0;
+        res.attr_per_user = (info.Attributes & PRINTER_ATTRIBUTE_PER_USER) != 0;
+        res.attr_enterprise_cloud = (info.Attributes & PRINTER_ATTRIBUTE_ENTERPRISE_CLOUD) != 0;
+
+        res.status_busy = (info.Status & PRINTER_STATUS_BUSY) != 0;
+        res.status_door_open = (info.Status & PRINTER_STATUS_DOOR_OPEN) != 0;
+        res.status_error = (info.Status & PRINTER_STATUS_ERROR) != 0;
+        res.status_initializing = (info.Status & PRINTER_STATUS_INITIALIZING) != 0;
+        res.status_io_active = (info.Status & PRINTER_STATUS_IO_ACTIVE) != 0;
+        res.status_manual_feed = (info.Status & PRINTER_STATUS_MANUAL_FEED) != 0;
+        res.status_no_toner = (info.Status & PRINTER_STATUS_NO_TONER) != 0;
+        res.status_not_available = (info.Status & PRINTER_STATUS_NOT_AVAILABLE) != 0;
+        res.status_offline = (info.Status & PRINTER_STATUS_OFFLINE) != 0;
+        res.status_out_of_memory = (info.Status & PRINTER_STATUS_OUT_OF_MEMORY) != 0;
+        res.status_output_bin_full = (info.Status & PRINTER_STATUS_OUTPUT_BIN_FULL) != 0;
+        res.status_page_punt = (info.Status & PRINTER_STATUS_PAGE_PUNT) != 0;
+        res.status_paper_jam = (info.Status & PRINTER_STATUS_PAPER_JAM) != 0;
+        res.status_paper_out = (info.Status & PRINTER_STATUS_PAPER_OUT) != 0;
+        res.status_paper_problem = (info.Status & PRINTER_STATUS_PAPER_PROBLEM) != 0;
+        res.status_paused = (info.Status & PRINTER_STATUS_PAUSED) != 0;
+        res.status_pending_deletion = (info.Status & PRINTER_STATUS_PENDING_DELETION) != 0;
+        res.status_power_save = (info.Status & PRINTER_STATUS_POWER_SAVE) != 0;
+        res.status_printing = (info.Status & PRINTER_STATUS_PRINTING) != 0;
+        res.status_processing = (info.Status & PRINTER_STATUS_PROCESSING) != 0;
+        res.status_server_unknown = (info.Status & PRINTER_STATUS_SERVER_UNKNOWN) != 0;
+        res.status_toner_low = (info.Status & PRINTER_STATUS_TONER_LOW) != 0;
+        res.status_user_intervention = (info.Status & PRINTER_STATUS_USER_INTERVENTION) != 0;
+        res.status_waiting = (info.Status & PRINTER_STATUS_WAITING) != 0;
+        res.status_warming_up = (info.Status & PRINTER_STATUS_WARMING_UP) != 0;
+
+        let dev_mode = &*info.pDevMode;
+        res.device_driver_version = dev_mode.dmDriverVersion;
+
+        if 0 != dev_mode.dmFields & DM_ORIENTATION {
+            res.device_orientation = Some(dev_mode.Anonymous1.Anonymous1.dmOrientation);
+        }
+        if 0 != dev_mode.dmFields & DM_PAPERSIZE {
+            res.device_paper_size = Some(dev_mode.Anonymous1.Anonymous1.dmPaperSize);
+        }
+        if 0 != dev_mode.dmFields & DM_PAPERLENGTH {
+            res.device_paper_length = Some(dev_mode.Anonymous1.Anonymous1.dmPaperLength);
+        }
+        if 0 != dev_mode.dmFields & DM_PAPERWIDTH {
+            res.device_paper_width = Some(dev_mode.Anonymous1.Anonymous1.dmPaperWidth);
+        }
+        if 0 != dev_mode.dmFields & DM_SCALE {
+            res.device_paper_scale = Some(dev_mode.Anonymous1.Anonymous1.dmScale);
+        }
+        if 0 != dev_mode.dmFields & DM_COPIES {
+            res.device_paper_copies = Some(dev_mode.Anonymous1.Anonymous1.dmCopies);
+        }
+        if 0 != dev_mode.dmFields & DM_DEFAULTSOURCE {
+            res.device_default_source = Some(dev_mode.Anonymous1.Anonymous1.dmDefaultSource);
+        }
+        if 0 != dev_mode.dmFields & DM_PRINTQUALITY {
+            res.device_print_quality = Some(dev_mode.Anonymous1.Anonymous1.dmPrintQuality);
+        }
+        if 0 != dev_mode.dmFields & DM_COLOR {
+            res.device_color = Some(dev_mode.dmColor);
+        }
+        if 0 != dev_mode.dmFields & DM_DUPLEX {
+            res.device_duplex = Some(dev_mode.dmDuplex);
+        }
+        if 0 != dev_mode.dmFields & DM_YRESOLUTION {
+            res.device_y_resolution = Some(dev_mode.dmYResolution);
+        }
+        if 0 != dev_mode.dmFields & DM_TTOPTION {
+            res.device_tt_option = Some(dev_mode.dmTTOption);
+        }
+        if 0 != dev_mode.dmFields & DM_COLLATE {
+            res.device_collate = Some(dev_mode.dmCollate);
+        }
+
+        if 0 != dev_mode.dmFields & DM_FORMNAME {
+            let p_form_name = &dev_mode.dmFormName as *const u16;
+            let len = min(CCHFORMNAME as usize, wcslen(p_form_name) as usize);
+            let slice = slice_from_raw_parts(p_form_name, len);
+            let str = OsString::from_wide(&*slice);
+            res.device_form_name = Some(str.to_string_lossy().to_string());
+        }
+        if 0 != dev_mode.dmFields & DM_NUP {
+            res.device_n_up = Some(dev_mode.Anonymous2.dmNup);
+        }
+        if 0 != dev_mode.dmFields & DM_ICMMETHOD {
+            res.device_icm_method = Some(dev_mode.dmICMMethod);
+        }
+        if 0 != dev_mode.dmFields & DM_ICMINTENT {
+            res.device_icm_intent = Some(dev_mode.dmICMIntent);
+        }
+        if 0 != dev_mode.dmFields & DM_MEDIATYPE {
+            res.device_media_type = Some(dev_mode.dmMediaType);
+        }
+        if 0 != dev_mode.dmFields & DM_DITHERTYPE {
+            res.device_dither_type = Some(dev_mode.dmDitherType);
+        }
+
+        res
     }
 }
 
@@ -633,7 +687,7 @@ impl WindowsPrintJob {
     }
 }
 
-fn extract_wstr(value: PWSTR) -> Option<String> {
+fn extract_wstr(value: PWSTR) -> String {
     unsafe {
         if !value.is_null() {
             let len = wcslen(value);
@@ -641,9 +695,9 @@ fn extract_wstr(value: PWSTR) -> Option<String> {
 
             let os_str = OsString::from_wide(&*slice);
 
-            Some(os_str.to_string_lossy().to_string())
+            os_str.to_string_lossy().to_string()
         } else {
-            None
+            String::default()
         }
     }
 }

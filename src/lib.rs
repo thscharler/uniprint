@@ -8,6 +8,26 @@ pub use linux::{default_printer, list_printers, printer_attr};
 #[cfg(target_os = "windows")]
 pub use windows::{default_printer, list_printers, printer_attr, Info};
 
+pub enum Status {
+    /// CUPS: printer-state=3
+    /// WIN: no status bit set
+    Idle,
+    /// CUPS: printer-state=4
+    /// WIN: PRINTER_STATUS_BUSY
+    Busy,
+    /// CUPS: printer-state=5
+    /// WIN: PRINTER_STATUS_OFFLINE, PRINTER_STATUS_NOT_AVAILABLE
+    Stopped,
+    /// CUPS: printer-state=5
+    ///     printer-state-reasons: ...
+    /// WIN: ...
+    Warn,
+    /// CUPS: printer-state=5
+    ///     printer-state-reasons: ...
+    /// WIN: ...
+    Error,
+}
+
 pub mod driver;
 #[cfg(target_os = "linux")]
 mod linux;
