@@ -5,7 +5,10 @@ use std::io::Write;
 use std::num::ParseIntError;
 
 #[cfg(target_os = "linux")]
-pub use linux::{default_printer, list_printers, printer_attr};
+pub use linux::{
+    default_printer, list_printers, printer_attr, ColorMode, Duplex, Finishings, Info, Orientation,
+    PaperSize, PaperSource, PaperType, Quality,
+};
 #[cfg(target_os = "windows")]
 pub use windows::{default_printer, list_printers, printer_attr, Info};
 
@@ -36,7 +39,10 @@ mod linux;
 mod windows;
 
 /// Trait for a printer driver.
-pub trait Driver {
+///
+/// Wraps around a Job. The impl provides higher level functions for
+/// actually printing stuff.
+pub trait Driver: Write {
     /// Output the driver results to this write.
     fn new<J: Job>(pr_name: &str, doc_name: &str) -> std::io::Result<Self>
     where
@@ -49,12 +55,32 @@ pub trait Driver {
     fn close(&mut self) -> std::io::Result<()>;
 }
 
+#[derive(Default, Clone, Debug)]
+pub struct JobParam {
+    pub copies: Option<u32>,
+    pub finishings: Option<Finishings>,
+    pub paper_size: Option<PaperSize>,
+    pub paper_source: Option<PaperSource>,
+    pub paper_type: Option<PaperType>,
+    pub number_up: Option<u32>,
+    pub orientation: Option<Orientation>,
+    pub color: Option<ColorMode>,
+    pub quality: Option<Quality>,
+    pub duplex: Option<Duplex>,
+}
+
 /// Abstracts the PrintJob.
 pub trait Job: Write {
     /// Create a new printjob.
     fn new(pr_name: &str, doc_name: &str) -> std::io::Result<Self>
     where
         Self: Sized;
+
+    /// Create a new printjob.
+    fn new_with(pr_name: &str, doc_name: &str, param: &JobParam) -> std::io::Result<Self>
+    where
+        Self: Sized;
+
     /// Informs the print-system of a new page. Emits no bytes to the actual printer.
     fn start_page(&self) -> std::io::Result<()>;
     /// Informs the print-system of a page end. Emits no bytes to the actual printer.
@@ -92,6 +118,15 @@ impl Job for PrintJob {
             job: windows::WindowsPrintJob::new(pr_name, doc_name)?,
             #[cfg(target_os = "linux")]
             job: linux::LinuxPrintJob::new(pr_name, doc_name)?,
+        })
+    }
+
+    fn new_with(pr_name: &str, doc_name: &str, param: &JobParam) -> std::io::Result<Self> {
+        Ok(Self {
+            #[cfg(target_os = "windows")]
+            job: windows::WindowsPrintJob::new_with(pr_name, doc_name, param)?,
+            #[cfg(target_os = "linux")]
+            job: linux::LinuxPrintJob::new_with(pr_name, doc_name, param)?,
         })
     }
 

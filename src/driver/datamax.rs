@@ -1,3 +1,5 @@
+use std::io::Write;
+
 use crate::{Driver, Job, PrintJob};
 
 const STX: char = '\x02';
@@ -64,6 +66,16 @@ impl<J: Job> Driver for Datamax<J> {
 
     fn close(&mut self) -> std::io::Result<()> {
         self.print.close()
+    }
+}
+
+impl<J: Job> Write for Datamax<J> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.print.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.print.flush()
     }
 }
 

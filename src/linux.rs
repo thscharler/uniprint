@@ -5,22 +5,28 @@
 //! https://www.cups.org
 //! https://stackoverflow.com/questions/44687154/more-complete-list-of-cups-printer-state-reasons
 
-use std::ffi::{c_int, CStr, CString};
+use std::ffi::{c_char, c_int, CStr, CString};
 use std::io::{ErrorKind, Write};
 use std::ptr::{self, slice_from_raw_parts};
 use std::str::FromStr;
 
 use cups_sys::{
-    cupsCreateJob, cupsFinishDocument, cupsFreeDests, cupsGetDests, 
-    cupsGetNamedDest, cupsLastErrorString, cupsStartDocument, cupsWriteRequestData,
+    cupsAddOption, cupsCreateJob, cupsFinishDocument, cupsFreeDests, cupsGetDests,
+    cupsGetNamedDest, cupsLastErrorString, cupsStartDocument, cupsWriteRequestData, CUPS_COPIES,
+    CUPS_FINISHINGS, CUPS_FINISHINGS_BIND, CUPS_FINISHINGS_COVER, CUPS_FINISHINGS_FOLD,
+    CUPS_FINISHINGS_NONE, CUPS_FINISHINGS_PUNCH, CUPS_FINISHINGS_STAPLE, CUPS_FINISHINGS_TRIM,
 };
 use cups_sys::{cups_dest_t, cups_option_t};
 use cups_sys::{
     http_status_e_HTTP_STATUS_CONTINUE as HTTP_STATUS_CONTINUE, http_t,
-    ipp_status_e_IPP_STATUS_OK as IPP_STATUS_OK, CUPS_FORMAT_RAW,
+    ipp_status_e_IPP_STATUS_OK as IPP_STATUS_OK, CUPS_FORMAT_RAW, CUPS_MEDIA_3X5, CUPS_MEDIA_4X6,
+    CUPS_MEDIA_5X7, CUPS_MEDIA_8X10, CUPS_MEDIA_A3, CUPS_MEDIA_A4, CUPS_MEDIA_A5, CUPS_MEDIA_A6,
+    CUPS_MEDIA_ENV10, CUPS_MEDIA_ENVDL, CUPS_MEDIA_LEGAL, CUPS_MEDIA_LETTER, CUPS_MEDIA_PHOTO_L,
+    CUPS_MEDIA_SUPERBA3, CUPS_MEDIA_TABLOID,
+    CUPS_MEDIA
 };
 
-use crate::PrintError;
+use crate::{JobParam, PrintError};
 
 impl PrintError {
     pub(crate) fn io_error(e: PrintError) -> std::io::Error {
@@ -65,15 +71,34 @@ pub fn default_printer() -> std::io::Result<String> {
     }
 }
 
-#[derive(Default, Debug, Clone)]
-pub enum ColorMode {
+#[derive(Default, Debug, Clone, Copy)]
+pub enum PaperSize {
+    Size3x5,
+    Size4x6,
+    Size5x7,
+    Size8x10,
+    A3,
+    A4,
+    A5,
+    A6,
+    Env10,
+    EnvDl,
+    Legal,
     #[default]
-    Auto,
-    Monochrome,
-    Color,
+    Letter,
+    PhotoL,
+    SuperBA3,
+    Tabloid,
 }
 
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Debug, Clone, Copy)]
+pub enum PaperSource {
+    #[default]
+    Auto,
+    Manual,
+}
+
+#[derive(Default, Debug, Clone, Copy)]
 pub enum Finishings {
     #[default]
     None,
@@ -85,7 +110,52 @@ pub enum Finishings {
     Trim,
 }
 
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Debug, Clone, Copy)]
+pub enum Orientation {
+    #[default]
+    Portrait,
+    Landscape,
+}
+
+#[derive(Default, Debug, Clone, Copy)]
+pub enum ColorMode {
+    #[default]
+    Auto,
+    Monochrome,
+    Color,
+}
+
+#[derive(Default, Debug, Clone, Copy)]
+pub enum Duplex {
+    #[default]
+    Simplex,
+    TwoSidedPortrait,
+    TwoSidedLandscape,
+}
+
+#[derive(Default, Debug, Clone, Copy)]
+pub enum PaperType {
+    #[default]
+    Auto,
+    Envelope,
+    Labels,
+    Letterhead,
+    Photo,
+    PhotoGlossy,
+    PhotoMatte,
+    Plain,
+    Transparency,
+}
+
+#[derive(Default, Debug, Clone, Copy)]
+pub enum Quality {
+    Draft,
+    #[default]
+    Normal,
+    High,
+}
+
+#[derive(Default, Debug, Clone, Copy)]
 pub enum PrinterState {
     #[default]
     Idle,
@@ -188,7 +258,7 @@ pub fn printer_attr(pr_name: &str) -> std::io::Result<Info> {
     unsafe {
         let cups_dest = cupsGetNamedDest(
             ptr::null_mut::<http_t>(),
-            pr_name.as_ptr() as *const i8,
+            pr_name.as_ptr() as *const c_char,
             ptr::null(),
         );
         if !cups_dest.is_null() {
@@ -244,11 +314,7 @@ pub fn printer_attr(pr_name: &str) -> std::io::Result<Info> {
                 cups_dest.options,
             )?;
 
-            let opt = find_option(
-                "print-color-mode",
-                cups_dest.num_options,
-                cups_dest.options,
-            );
+            let opt = find_option("print-color-mode", cups_dest.num_options, cups_dest.options);
             result.print_color_mode = option_map(
                 &opt,
                 &[
@@ -258,17 +324,9 @@ pub fn printer_attr(pr_name: &str) -> std::io::Result<Info> {
                 ],
             );
 
-            result.copies = find_num_option(
-                "copies",
-                cups_dest.num_options,
-                cups_dest.options,
-            )?;
+            result.copies = find_num_option("copies", cups_dest.num_options, cups_dest.options)?;
 
-            let opt = find_option(
-                "finishings",
-                cups_dest.num_options,
-                cups_dest.options,
-            );
+            let opt = find_option("finishings", cups_dest.num_options, cups_dest.options);
             result.finishings = option_map(
                 &opt,
                 &[
@@ -282,18 +340,16 @@ pub fn printer_attr(pr_name: &str) -> std::io::Result<Info> {
                 ],
             );
 
-            result.number_up = find_num_option(
-                "number-up",
-                cups_dest.num_options,
-                cups_dest.options,
-            )?;
+            result.number_up =
+                find_num_option("number-up", cups_dest.num_options, cups_dest.options)?;
 
             let opt = find_option(
                 "printer-is-accepting-jobs",
                 cups_dest.num_options,
                 cups_dest.options,
             );
-            result.printer_is_accepting_jobs = option_map(&opt, &[("true", true), ("false", false)]);
+            result.printer_is_accepting_jobs =
+                option_map(&opt, &[("true", true), ("false", false)]);
 
             let opt = find_option(
                 "printer-is-shared",
@@ -309,11 +365,7 @@ pub fn printer_attr(pr_name: &str) -> std::io::Result<Info> {
             );
             result.printer_is_temporary = option_map(&opt, &[("true", true), ("false", false)]);
 
-            let opt = find_option(
-                "printer-state",
-                cups_dest.num_options,
-                cups_dest.options,
-            );
+            let opt = find_option("printer-state", cups_dest.num_options, cups_dest.options);
             result.printer_state = option_map(
                 &opt,
                 &[
@@ -383,11 +435,8 @@ pub fn printer_attr(pr_name: &str) -> std::io::Result<Info> {
                 _ => {}
             }
 
-            result.printer_type = find_num_option(
-                "printer-type",
-                cups_dest.num_options,
-                cups_dest.options,
-            )?;
+            result.printer_type =
+                find_num_option("printer-type", cups_dest.num_options, cups_dest.options)?;
 
             cupsFreeDests(1, cups_dest);
 
@@ -406,8 +455,8 @@ pub fn printer_attr(pr_name: &str) -> std::io::Result<Info> {
 //                ptr::null_mut::<http_t>(),
 //                cups_dest as *mut cups_dest_t,
 //                dinfo,
-//                // CString::new("copies").expect("copies").as_bytes_with_nul().as_ptr() as *const i8,
-//                CUPS_COPIES.as_ptr() as *const i8,
+//                // CString::new("copies").expect("copies").as_bytes_with_nul().as_ptr() as *const c_char,
+//                CUPS_COPIES.as_ptr() as *const c_char,
 //                ptr::null(),
 //            ) != 0;
 //            println!("copies={}", copies);
@@ -416,13 +465,15 @@ pub fn printer_attr(pr_name: &str) -> std::io::Result<Info> {
 //                ptr::null_mut::<http_t>(),
 //                cups_dest as *mut cups_dest_t,
 //                dinfo,
-//                CUPS_COPIES.as_ptr() as *const i8,
+//                CUPS_COPIES.as_ptr() as *const c_char,
 //            );
 //            let copies = ippGetInteger(copies, 0);
 //            println!("copies={}", copies);
 //
 //            cupsFreeDestInfo(dinfo);
 
+/// Find a specific option.
+/// Assumes options are ordered by name.
 fn find_option(name: &str, n: i32, options: *const cups_option_t) -> String {
     unsafe {
         let options = &*slice_from_raw_parts(options, n as usize);
@@ -439,6 +490,8 @@ fn find_option(name: &str, n: i32, options: *const cups_option_t) -> String {
     }
 }
 
+/// Find a specific option and converts it to a number via parse().
+/// Assumes options are ordered by name.
 fn find_num_option<T>(
     name: &str,
     n: i32,
@@ -466,6 +519,8 @@ where
     }
 }
 
+/// Find a specific option and map it to some T.
+/// The first value is treated as default value.
 fn option_map<T: Clone>(s: &str, opt: &[(&str, T)]) -> T {
     for v in opt {
         if s == v.0 {
@@ -512,7 +567,7 @@ impl Write for LinuxPrintJob {
         unsafe {
             if cupsWriteRequestData(
                 ptr::null_mut::<http_t>(),
-                buf.as_ptr() as *const i8,
+                buf.as_ptr() as *const c_char,
                 buf.len(),
             ) != HTTP_STATUS_CONTINUE
             {
@@ -537,8 +592,13 @@ impl Drop for LinuxPrintJob {
 }
 
 impl LinuxPrintJob {
+
     /// Starts a printjob.
-    pub fn new(pr_name: &str, doc_name: &str) -> Result<Self, std::io::Error> {
+    pub fn new(pr_name: &str, doc_name: &str) -> std::io::Result<Self> {
+        Self::new_with(pr_name, doc_name, &JobParam::default())
+    }
+
+    pub fn new_with(pr_name: &str, doc_name: &str, param: &JobParam) -> std::io::Result<Self> {
         let mut job = LinuxPrintJob {
             pr_name: CString::new(pr_name)?,
             doc_name: CString::new(doc_name)?,
@@ -546,12 +606,67 @@ impl LinuxPrintJob {
         };
 
         unsafe {
+            let mut options = ptr::null_mut::<cups_option_t>();
+            let p_options = (&mut options) as *mut *mut cups_option_t;
+            let mut num_options = 0;
+
+            if let Some(copies) = param.copies {
+                let copies = CString::new(copies.to_string())?;
+                num_options = cupsAddOption(
+                    CUPS_COPIES.as_ptr() as *const c_char,
+                    copies.as_ptr(),
+                    num_options,
+                    p_options,
+                );
+            }
+            if let Some(finishings) = param.finishings {
+                let finishings = match finishings {
+                    Finishings::None => CUPS_FINISHINGS_NONE.as_ptr(),
+                    Finishings::Staple => CUPS_FINISHINGS_STAPLE.as_ptr(),
+                    Finishings::Punch => CUPS_FINISHINGS_PUNCH.as_ptr(),
+                    Finishings::Cover => CUPS_FINISHINGS_COVER.as_ptr(),
+                    Finishings::Bind => CUPS_FINISHINGS_BIND.as_ptr(),
+                    Finishings::Fold => CUPS_FINISHINGS_FOLD.as_ptr(),
+                    Finishings::Trim => CUPS_FINISHINGS_TRIM.as_ptr(),
+                };
+                num_options = cupsAddOption(
+                    CUPS_FINISHINGS.as_ptr() as *const c_char,
+                    finishings as *const c_char,
+                    num_options,
+                    p_options,
+                );
+            }
+            if let Some(paper_size) = param.paper_size {
+                let paper_size = match paper_size {
+                    PaperSize::Size3x5 => CUPS_MEDIA_3X5.as_ptr(),
+                    PaperSize::Size4x6 => CUPS_MEDIA_4X6.as_ptr(),
+                    PaperSize::Size5x7 => CUPS_MEDIA_5X7.as_ptr(),
+                    PaperSize::Size8x10 => CUPS_MEDIA_8X10.as_ptr(),
+                    PaperSize::A3 => CUPS_MEDIA_A3.as_ptr(),
+                    PaperSize::A4 => CUPS_MEDIA_A4.as_ptr(),
+                    PaperSize::A5 => CUPS_MEDIA_A5.as_ptr(),
+                    PaperSize::A6 => CUPS_MEDIA_A6.as_ptr(),
+                    PaperSize::Env10 => CUPS_MEDIA_ENV10.as_ptr(),
+                    PaperSize::EnvDl => CUPS_MEDIA_ENVDL.as_ptr(),
+                    PaperSize::Legal => CUPS_MEDIA_LEGAL.as_ptr(),
+                    PaperSize::Letter => CUPS_MEDIA_LETTER.as_ptr(),
+                    PaperSize::PhotoL => CUPS_MEDIA_PHOTO_L.as_ptr(),
+                    PaperSize::SuperBA3 => CUPS_MEDIA_SUPERBA3.as_ptr(),
+                    PaperSize::Tabloid => CUPS_MEDIA_TABLOID.as_ptr(),
+                };
+                num_options = cupsAddOption(
+                    CUPS_MEDIA.as_ptr() as *const c_char,
+                    paper_size as *const c_char,
+                    num_options,
+                    p_options);
+            }
+
             job.job_id = cupsCreateJob(
                 ptr::null_mut::<http_t>(),
                 job.pr_name.as_ptr().cast(),
                 job.doc_name.as_ptr().cast(),
-                0,
-                ptr::null_mut::<cups_option_t>(),
+                num_options,
+                options,
             );
             if job.job_id == 0 {
                 return Err(PrintError::last_io_error());
