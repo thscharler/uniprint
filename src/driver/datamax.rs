@@ -1,13 +1,15 @@
+//! Datamax print language.
+
 use std::io::Write;
 
-use crate::{Driver, Job, PrintJob};
+use crate::{Driver, JobParam, PrintJob};
 
 const STX: char = '\x02';
 const CR: char = '\x0D';
 
 /// Datamax driver.
-pub struct Datamax<J: Job> {
-    pub print: J,
+pub struct Datamax {
+    pub print: PrintJob,
 }
 
 /// Constants for datamax.
@@ -49,10 +51,16 @@ pub enum ScaleSize {
     S72,
 }
 
-impl<J: Job> Driver for Datamax<J> {
-    fn new<K: Job>(pr_name: &str, doc_name: &str) -> std::io::Result<Self> {
+impl Driver for Datamax {
+    fn new(pr_name: &str, doc_name: &str) -> std::io::Result<Self> {
         Ok(Self {
-            print: J::new(pr_name, doc_name)?,
+            print: PrintJob::new(pr_name, doc_name)?,
+        })
+    }
+
+    fn new_with(pr_name: &str, doc_name: &str, param: &JobParam) -> std::io::Result<Self> {
+        Ok(Self {
+            print: PrintJob::new_with(pr_name, doc_name, param)?,
         })
     }
 
@@ -69,7 +77,7 @@ impl<J: Job> Driver for Datamax<J> {
     }
 }
 
-impl<J: Job> Write for Datamax<J> {
+impl Write for Datamax {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.print.write(buf)
     }
@@ -79,16 +87,7 @@ impl<J: Job> Write for Datamax<J> {
     }
 }
 
-impl Datamax<PrintJob> {
-    /// Opens a Spooler and starts a new Job.
-    pub fn new_printjob(printer_name: &str, doc_name: &str) -> Result<Self, std::io::Error> {
-        Ok(Self {
-            print: PrintJob::new(printer_name, doc_name)?,
-        })
-    }
-}
-
-impl<J: Job> Datamax<J> {
+impl Datamax {
     /// Label starten.
     pub fn start_label(&mut self) -> Result<(), std::io::Error> {
         write!(self.print, "{}", STX)?;

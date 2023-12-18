@@ -46,13 +46,18 @@ mod windows;
 /// Wraps around a Job. The impl provides higher level functions for
 /// actually printing stuff.
 pub trait Driver: Write {
-    /// Output the driver results to this write.
-    fn new<J: Job>(pr_name: &str, doc_name: &str) -> std::io::Result<Self>
+    /// Create a new printjob.
+    fn new(pr_name: &str, doc_name: &str) -> std::io::Result<Self>
     where
         Self: Sized;
-    /// Start a new page.
+    /// Create a new printjob.
+    fn new_with(pr_name: &str, doc_name: &str, param: &JobParam) -> std::io::Result<Self>
+    where
+        Self: Sized;
+
+    /// Start a new page. Hint to the printing system.
     fn start_page(&mut self) -> std::io::Result<()>;
-    /// End a page.
+    /// End a page. Hint to the printing system.
     fn end_page(&mut self) -> std::io::Result<()>;
     /// End the document.
     fn close(&mut self) -> std::io::Result<()>;
@@ -89,82 +94,6 @@ pub struct JobParam {
     pub tt_option: Option<TrueType>,
     #[cfg(target_os = "windows")]
     pub collate: Option<Collate>,
-}
-
-/// Abstracts the PrintJob.
-pub trait Job: Write {
-    /// Create a new printjob.
-    fn new(pr_name: &str, doc_name: &str) -> std::io::Result<Self>
-    where
-        Self: Sized;
-
-    /// Create a new printjob.
-    fn new_with(pr_name: &str, doc_name: &str, param: &JobParam) -> std::io::Result<Self>
-    where
-        Self: Sized;
-
-    /// Informs the print-system of a new page. Emits no bytes to the actual printer.
-    fn start_page(&self) -> std::io::Result<()>;
-    /// Informs the print-system of a page end. Emits no bytes to the actual printer.
-    fn end_page(&self) -> std::io::Result<()>;
-    /// Closes and sends of the printjob.
-    fn close(&mut self) -> std::io::Result<()>;
-}
-
-/// A print job.
-pub struct PrintJob {
-    #[cfg(target_os = "windows")]
-    job: windows::WindowsPrintJob,
-    #[cfg(target_os = "linux")]
-    job: linux::LinuxPrintJob,
-}
-
-impl Write for PrintJob {
-    /// Write bytes to a printer.
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.job.write(buf)
-    }
-
-    /// ...
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.job.flush()
-    }
-}
-
-impl Job for PrintJob {
-    /// Create a new printjob.
-    fn new(pr_name: &str, doc_name: &str) -> std::io::Result<Self> {
-        Ok(Self {
-            #[cfg(target_os = "windows")]
-            job: windows::WindowsPrintJob::new(pr_name, doc_name)?,
-            #[cfg(target_os = "linux")]
-            job: linux::LinuxPrintJob::new(pr_name, doc_name)?,
-        })
-    }
-
-    fn new_with(pr_name: &str, doc_name: &str, param: &JobParam) -> std::io::Result<Self> {
-        Ok(Self {
-            #[cfg(target_os = "windows")]
-            job: windows::WindowsPrintJob::new_with(pr_name, doc_name, param)?,
-            #[cfg(target_os = "linux")]
-            job: linux::LinuxPrintJob::new_with(pr_name, doc_name, param)?,
-        })
-    }
-
-    /// Informs the print-system of a new page. Emits no bytes to the actual printer.
-    fn start_page(&self) -> std::io::Result<()> {
-        self.job.start_page()
-    }
-
-    /// Informs the print-system of a page end. Emits no bytes to the actual printer.
-    fn end_page(&self) -> std::io::Result<()> {
-        self.job.end_page()
-    }
-
-    /// Closes and sends of the printjob.
-    fn close(&mut self) -> std::io::Result<()> {
-        self.job.close()
-    }
 }
 
 /// Printer errors.
