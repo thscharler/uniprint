@@ -1,6 +1,6 @@
 use std::io::Write;
 
-use printing::*;
+use uniprint::*;
 
 #[test]
 fn test_list() {

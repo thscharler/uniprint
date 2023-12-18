@@ -86,7 +86,7 @@ pub enum Format {
     Text,
 }
 
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone)]
 pub enum Finishings {
     Named(String),
     #[default]
@@ -99,7 +99,7 @@ pub enum Finishings {
     Trim,
 }
 
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone)]
 pub enum PaperSize {
     Named(String),
     Size3x5,
@@ -120,7 +120,7 @@ pub enum PaperSize {
     Tabloid,
 }
 
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone)]
 pub enum PaperSource {
     Named(String),
     #[default]
@@ -128,7 +128,7 @@ pub enum PaperSource {
     Manual,
 }
 
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone)]
 pub enum PaperType {
     Named(String),
     #[default]
@@ -143,7 +143,7 @@ pub enum PaperType {
     Transparency,
 }
 
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone)]
 pub enum Orientation {
     Named(String),
     #[default]
@@ -151,7 +151,7 @@ pub enum Orientation {
     Landscape,
 }
 
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone)]
 pub enum ColorMode {
     Named(String),
     Auto,
@@ -160,7 +160,7 @@ pub enum ColorMode {
     Color,
 }
 
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone)]
 pub enum Quality {
     Named(String),
     Draft,
@@ -169,7 +169,7 @@ pub enum Quality {
     High,
 }
 
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone)]
 pub enum Duplex {
     Named(String),
     #[default]
@@ -178,7 +178,7 @@ pub enum Duplex {
     TwoSidedLandscape,
 }
 
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrinterState {
     #[default]
     Idle,
@@ -630,7 +630,7 @@ pub fn list_printers() -> std::io::Result<Vec<String>> {
 
 /// Printjob data.
 #[derive(Clone, Debug)]
-pub(crate) struct LinuxPrintJob {
+pub struct LinuxPrintJob {
     pr_name: CString,
     doc_name: CString,
     job_id: c_int,
@@ -719,192 +719,194 @@ impl LinuxPrintJob {
         }
     }
 
-    fn create_options(param: &JobParam) -> Result<(*mut cups_option_t, i32), Error> {
+    fn create_options(param: &JobParam) -> std::io::Result<(*mut cups_option_t, i32)> {
         let mut options = ptr::null_mut::<cups_option_t>();
         let p_options = (&mut options) as *mut *mut cups_option_t;
         let mut num_options = 0;
 
-        if let Some(copies) = param.copies {
-            let copies = CString::new(copies.to_string())?;
-            num_options = cupsAddOption(
-                CUPS_COPIES.as_ptr() as *const c_char,
-                copies.as_ptr(),
-                num_options,
-                p_options,
-            );
-        }
-        if let Some(finishings) = param.finishings {
-            let named;
-            let finishings = match finishings {
-                Finishings::Named(v) => {
-                    named = CString::new(v)?;
-                    named.as_ptr()
-                }
-                Finishings::None => CUPS_FINISHINGS_NONE.as_ptr(),
-                Finishings::Staple => CUPS_FINISHINGS_STAPLE.as_ptr(),
-                Finishings::Punch => CUPS_FINISHINGS_PUNCH.as_ptr(),
-                Finishings::Cover => CUPS_FINISHINGS_COVER.as_ptr(),
-                Finishings::Bind => CUPS_FINISHINGS_BIND.as_ptr(),
-                Finishings::Fold => CUPS_FINISHINGS_FOLD.as_ptr(),
-                Finishings::Trim => CUPS_FINISHINGS_TRIM.as_ptr(),
-            };
-            num_options = cupsAddOption(
-                CUPS_FINISHINGS.as_ptr() as *const c_char,
-                finishings as *const c_char,
-                num_options,
-                p_options,
-            );
-        }
-        if let Some(paper_size) = param.paper_size {
-            let named;
-            let paper_size = match paper_size {
-                PaperSize::Named(v) => {
-                    named = CString::new(v)?;
-                    named.as_ptr()
-                }
-                PaperSize::Size3x5 => CUPS_MEDIA_3X5.as_ptr(),
-                PaperSize::Size4x6 => CUPS_MEDIA_4X6.as_ptr(),
-                PaperSize::Size5x7 => CUPS_MEDIA_5X7.as_ptr(),
-                PaperSize::Size8x10 => CUPS_MEDIA_8X10.as_ptr(),
-                PaperSize::A3 => CUPS_MEDIA_A3.as_ptr(),
-                PaperSize::A4 => CUPS_MEDIA_A4.as_ptr(),
-                PaperSize::A5 => CUPS_MEDIA_A5.as_ptr(),
-                PaperSize::A6 => CUPS_MEDIA_A6.as_ptr(),
-                PaperSize::Env10 => CUPS_MEDIA_ENV10.as_ptr(),
-                PaperSize::EnvDl => CUPS_MEDIA_ENVDL.as_ptr(),
-                PaperSize::Legal => CUPS_MEDIA_LEGAL.as_ptr(),
-                PaperSize::Letter => CUPS_MEDIA_LETTER.as_ptr(),
-                PaperSize::PhotoL => CUPS_MEDIA_PHOTO_L.as_ptr(),
-                PaperSize::SuperBA3 => CUPS_MEDIA_SUPERBA3.as_ptr(),
-                PaperSize::Tabloid => CUPS_MEDIA_TABLOID.as_ptr(),
-            };
-            num_options = cupsAddOption(
-                CUPS_MEDIA.as_ptr() as *const c_char,
-                paper_size as *const c_char,
-                num_options,
-                p_options,
-            );
-        }
-        if let Some(paper_source) = param.paper_source {
-            let named;
-            let paper_source = match paper_source {
-                PaperSource::Named(v) => {
-                    named = CString::new(v)?;
-                    named.as_ptr()
-                }
-                PaperSource::Auto => CUPS_MEDIA_SOURCE_AUTO.as_ptr(),
-                PaperSource::Manual => CUPS_MEDIA_SOURCE_MANUAL.as_ptr(),
-            };
-            num_options = cupsAddOption(
-                CUPS_MEDIA_SOURCE.as_ptr() as *const c_char,
-                paper_source as *const c_char,
-                num_options,
-                p_options,
-            );
-        }
-        if let Some(paper_type) = param.paper_type {
-            let named;
-            let paper_type = match paper_type {
-                PaperType::Named(v) => {
-                    named = CString::new(v)?;
-                    named.as_ptr()
-                }
-                PaperType::Auto => CUPS_MEDIA_TYPE_AUTO.as_ptr(),
-                PaperType::Envelope => CUPS_MEDIA_TYPE_ENVELOPE.as_ptr(),
-                PaperType::Labels => CUPS_MEDIA_TYPE_LABELS.as_ptr(),
-                PaperType::Letterhead => CUPS_MEDIA_TYPE_LETTERHEAD.as_ptr(),
-                PaperType::Photo => CUPS_MEDIA_TYPE_PHOTO.as_ptr(),
-                PaperType::PhotoGlossy => CUPS_MEDIA_TYPE_PHOTO_GLOSSY.as_ptr(),
-                PaperType::PhotoMatte => CUPS_MEDIA_TYPE_PHOTO_MATTE.as_ptr(),
-                PaperType::Plain => CUPS_MEDIA_TYPE_PLAIN.as_ptr(),
-                PaperType::Transparency => CUPS_MEDIA_TYPE_TRANSPARENCY.as_ptr(),
-            };
-            num_options = cupsAddOption(
-                CUPS_MEDIA_TYPE.as_ptr() as *const c_char,
-                paper_type as *const c_char,
-                num_options,
-                p_options,
-            );
-        }
-        if let Some(number_up) = param.number_up {
-            let number_up = CString::new(number_up.to_string())?;
-            num_options = cupsAddOption(
-                CUPS_NUMBER_UP.as_ptr() as *const c_char,
-                number_up.as_ptr(),
-                num_options,
-                p_options,
-            );
-        }
-        if let Some(orientation) = param.orientation {
-            let named;
-            let orientation = match orientation {
-                Orientation::Named(v) => {
-                    named = CString::new(v)?;
-                    named.as_ptr()
-                }
-                Orientation::Portrait => CUPS_ORIENTATION_LANDSCAPE.as_ptr(),
-                Orientation::Landscape => CUPS_ORIENTATION_LANDSCAPE.as_ptr(),
-            };
-            num_options = cupsAddOption(
-                CUPS_ORIENTATION.as_ptr() as *const c_char,
-                orientation as *const c_char,
-                num_options,
-                p_options,
-            );
-        }
-        if let Some(color) = param.color {
-            let named;
-            let color = match color {
-                ColorMode::Named(v) => {
-                    named = CString::new(v)?;
-                    named.as_ptr()
-                }
-                ColorMode::Auto => CUPS_PRINT_COLOR_MODE_AUTO.as_ptr(),
-                ColorMode::Monochrome => CUPS_PRINT_COLOR_MODE_COLOR.as_ptr(),
-                ColorMode::Color => CUPS_PRINT_COLOR_MODE_MONOCHROME.as_ptr(),
-            };
-            num_options = cupsAddOption(
-                CUPS_PRINT_COLOR_MODE.as_ptr() as *const c_char,
-                color as *const c_char,
-                num_options,
-                p_options,
-            );
-        }
-        if let Some(quality) = param.quality {
-            let named;
-            let quality = match quality {
-                Quality::Named(v) => {
-                    named = CString::new(v)?;
-                    named.as_ptr()
-                }
-                Quality::Draft => CUPS_PRINT_QUALITY_DRAFT.as_ptr(),
-                Quality::Normal => CUPS_PRINT_QUALITY_NORMAL.as_ptr(),
-                Quality::High => CUPS_PRINT_QUALITY_HIGH.as_ptr(),
-            };
-            num_options = cupsAddOption(
-                CUPS_PRINT_QUALITY.as_ptr() as *const c_char,
-                quality as *const c_char,
-                num_options,
-                p_options,
-            );
-        }
-        if let Some(duplex) = param.duplex {
-            let named;
-            let duplex = match duplex {
-                Duplex::Named(v) => {
-                    named = CString::new(v)?;
-                    named.as_ptr()
-                }
-                Duplex::Simplex => CUPS_SIDES_ONE_SIDED.as_ptr(),
-                Duplex::TwoSidedPortrait => CUPS_SIDES_TWO_SIDED_PORTRAIT.as_ptr(),
-                Duplex::TwoSidedLandscape => CUPS_SIDES_TWO_SIDED_LANDSCAPE.as_ptr(),
-            };
-            num_options = cupsAddOption(
-                CUPS_SIDES.as_ptr() as *const c_char,
-                duplex as *const c_char,
-                num_options,
-                p_options,
-            );
+        unsafe {
+            if let Some(copies) = param.copies {
+                let copies = CString::new(copies.to_string())?;
+                num_options = cupsAddOption(
+                    CUPS_COPIES.as_ptr() as *const c_char,
+                    copies.as_ptr(),
+                    num_options,
+                    p_options,
+                );
+            }
+            if let Some(finishings) = param.finishings.clone() {
+                let named;
+                let finishings = match finishings {
+                    Finishings::Named(v) => {
+                        named = CString::new(v)?;
+                        named.as_ptr() as *const u8
+                    }
+                    Finishings::None => CUPS_FINISHINGS_NONE.as_ptr(),
+                    Finishings::Staple => CUPS_FINISHINGS_STAPLE.as_ptr(),
+                    Finishings::Punch => CUPS_FINISHINGS_PUNCH.as_ptr(),
+                    Finishings::Cover => CUPS_FINISHINGS_COVER.as_ptr(),
+                    Finishings::Bind => CUPS_FINISHINGS_BIND.as_ptr(),
+                    Finishings::Fold => CUPS_FINISHINGS_FOLD.as_ptr(),
+                    Finishings::Trim => CUPS_FINISHINGS_TRIM.as_ptr(),
+                };
+                num_options = cupsAddOption(
+                    CUPS_FINISHINGS.as_ptr() as *const c_char,
+                    finishings as *const c_char,
+                    num_options,
+                    p_options,
+                );
+            }
+            if let Some(paper_size) = param.paper_size.clone() {
+                let named;
+                let paper_size = match paper_size {
+                    PaperSize::Named(v) => {
+                        named = CString::new(v)?;
+                        named.as_ptr() as *const u8
+                    }
+                    PaperSize::Size3x5 => CUPS_MEDIA_3X5.as_ptr(),
+                    PaperSize::Size4x6 => CUPS_MEDIA_4X6.as_ptr(),
+                    PaperSize::Size5x7 => CUPS_MEDIA_5X7.as_ptr(),
+                    PaperSize::Size8x10 => CUPS_MEDIA_8X10.as_ptr(),
+                    PaperSize::A3 => CUPS_MEDIA_A3.as_ptr(),
+                    PaperSize::A4 => CUPS_MEDIA_A4.as_ptr(),
+                    PaperSize::A5 => CUPS_MEDIA_A5.as_ptr(),
+                    PaperSize::A6 => CUPS_MEDIA_A6.as_ptr(),
+                    PaperSize::Env10 => CUPS_MEDIA_ENV10.as_ptr(),
+                    PaperSize::EnvDl => CUPS_MEDIA_ENVDL.as_ptr(),
+                    PaperSize::Legal => CUPS_MEDIA_LEGAL.as_ptr(),
+                    PaperSize::Letter => CUPS_MEDIA_LETTER.as_ptr(),
+                    PaperSize::PhotoL => CUPS_MEDIA_PHOTO_L.as_ptr(),
+                    PaperSize::SuperBA3 => CUPS_MEDIA_SUPERBA3.as_ptr(),
+                    PaperSize::Tabloid => CUPS_MEDIA_TABLOID.as_ptr(),
+                };
+                num_options = cupsAddOption(
+                    CUPS_MEDIA.as_ptr() as *const c_char,
+                    paper_size as *const c_char,
+                    num_options,
+                    p_options,
+                );
+            }
+            if let Some(paper_source) = param.paper_source.clone() {
+                let named;
+                let paper_source = match paper_source {
+                    PaperSource::Named(v) => {
+                        named = CString::new(v)?;
+                        named.as_ptr() as *const u8
+                    }
+                    PaperSource::Auto => CUPS_MEDIA_SOURCE_AUTO.as_ptr(),
+                    PaperSource::Manual => CUPS_MEDIA_SOURCE_MANUAL.as_ptr(),
+                };
+                num_options = cupsAddOption(
+                    CUPS_MEDIA_SOURCE.as_ptr() as *const c_char,
+                    paper_source as *const c_char,
+                    num_options,
+                    p_options,
+                );
+            }
+            if let Some(paper_type) = param.paper_type.clone() {
+                let named;
+                let paper_type = match paper_type {
+                    PaperType::Named(v) => {
+                        named = CString::new(v)?;
+                        named.as_ptr() as *const u8
+                    }
+                    PaperType::Auto => CUPS_MEDIA_TYPE_AUTO.as_ptr(),
+                    PaperType::Envelope => CUPS_MEDIA_TYPE_ENVELOPE.as_ptr(),
+                    PaperType::Labels => CUPS_MEDIA_TYPE_LABELS.as_ptr(),
+                    PaperType::Letterhead => CUPS_MEDIA_TYPE_LETTERHEAD.as_ptr(),
+                    PaperType::Photo => CUPS_MEDIA_TYPE_PHOTO.as_ptr(),
+                    PaperType::PhotoGlossy => CUPS_MEDIA_TYPE_PHOTO_GLOSSY.as_ptr(),
+                    PaperType::PhotoMatte => CUPS_MEDIA_TYPE_PHOTO_MATTE.as_ptr(),
+                    PaperType::Plain => CUPS_MEDIA_TYPE_PLAIN.as_ptr(),
+                    PaperType::Transparency => CUPS_MEDIA_TYPE_TRANSPARENCY.as_ptr(),
+                };
+                num_options = cupsAddOption(
+                    CUPS_MEDIA_TYPE.as_ptr() as *const c_char,
+                    paper_type as *const c_char,
+                    num_options,
+                    p_options,
+                );
+            }
+            if let Some(number_up) = param.number_up {
+                let number_up = CString::new(number_up.to_string())?;
+                num_options = cupsAddOption(
+                    CUPS_NUMBER_UP.as_ptr() as *const c_char,
+                    number_up.as_ptr(),
+                    num_options,
+                    p_options,
+                );
+            }
+            if let Some(orientation) = param.orientation.clone() {
+                let named;
+                let orientation = match orientation {
+                    Orientation::Named(v) => {
+                        named = CString::new(v)?;
+                        named.as_ptr() as *const u8
+                    }
+                    Orientation::Portrait => CUPS_ORIENTATION_LANDSCAPE.as_ptr(),
+                    Orientation::Landscape => CUPS_ORIENTATION_LANDSCAPE.as_ptr(),
+                };
+                num_options = cupsAddOption(
+                    CUPS_ORIENTATION.as_ptr() as *const c_char,
+                    orientation as *const c_char,
+                    num_options,
+                    p_options,
+                );
+            }
+            if let Some(color) = param.color.clone() {
+                let named;
+                let color = match color {
+                    ColorMode::Named(v) => {
+                        named = CString::new(v)?;
+                        named.as_ptr() as *const u8
+                    }
+                    ColorMode::Auto => CUPS_PRINT_COLOR_MODE_AUTO.as_ptr(),
+                    ColorMode::Monochrome => CUPS_PRINT_COLOR_MODE_COLOR.as_ptr(),
+                    ColorMode::Color => CUPS_PRINT_COLOR_MODE_MONOCHROME.as_ptr(),
+                };
+                num_options = cupsAddOption(
+                    CUPS_PRINT_COLOR_MODE.as_ptr() as *const c_char,
+                    color as *const c_char,
+                    num_options,
+                    p_options,
+                );
+            }
+            if let Some(quality) = param.quality.clone() {
+                let named;
+                let quality = match quality {
+                    Quality::Named(v) => {
+                        named = CString::new(v)?;
+                        named.as_ptr() as *const u8
+                    }
+                    Quality::Draft => CUPS_PRINT_QUALITY_DRAFT.as_ptr(),
+                    Quality::Normal => CUPS_PRINT_QUALITY_NORMAL.as_ptr(),
+                    Quality::High => CUPS_PRINT_QUALITY_HIGH.as_ptr(),
+                };
+                num_options = cupsAddOption(
+                    CUPS_PRINT_QUALITY.as_ptr() as *const c_char,
+                    quality as *const c_char,
+                    num_options,
+                    p_options,
+                );
+            }
+            if let Some(duplex) = param.duplex.clone() {
+                let named;
+                let duplex = match duplex {
+                    Duplex::Named(v) => {
+                        named = CString::new(v)?;
+                        named.as_ptr() as *const u8
+                    }
+                    Duplex::Simplex => CUPS_SIDES_ONE_SIDED.as_ptr(),
+                    Duplex::TwoSidedPortrait => CUPS_SIDES_TWO_SIDED_PORTRAIT.as_ptr(),
+                    Duplex::TwoSidedLandscape => CUPS_SIDES_TWO_SIDED_LANDSCAPE.as_ptr(),
+                };
+                num_options = cupsAddOption(
+                    CUPS_SIDES.as_ptr() as *const c_char,
+                    duplex as *const c_char,
+                    num_options,
+                    p_options,
+                );
+            }
         }
 
         Ok((options, num_options))

@@ -97,7 +97,7 @@ pub enum Format {
 }
 
 #[repr(u32)]
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone)]
 pub enum PaperSize {
     /// Use this number for the attribute.
     Numeric(i16),
@@ -233,7 +233,7 @@ impl PaperSize {
 }
 
 #[repr(u32)]
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone)]
 pub enum PaperSource {
     /// Use this number for the attribute.
     Numeric(i16),
@@ -264,7 +264,7 @@ impl PaperSource {
 }
 
 #[repr(u32)]
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone)]
 pub enum PaperType {
     /// Use this number for the attribute.
     Numeric(u32),
@@ -285,7 +285,7 @@ impl PaperType {
 }
 
 #[repr(u32)]
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone)]
 pub enum Orientation {
     /// Use this number for the attribute.
     Numeric(i16),
@@ -304,7 +304,7 @@ impl Orientation {
 }
 
 #[repr(i16)]
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone)]
 pub enum ColorMode {
     /// Use this number for the attribute.
     Numeric(i16),
@@ -323,7 +323,7 @@ impl ColorMode {
 }
 
 #[repr(i32)]
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone)]
 pub enum Quality {
     /// Use this number for the attribute.
     Numeric(i16),
@@ -344,7 +344,7 @@ impl Quality {
 }
 
 #[repr(i16)]
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone)]
 pub enum Duplex {
     /// Use this number for the attribute.
     Numeric(i16),
@@ -364,7 +364,7 @@ impl Duplex {
 }
 
 #[repr(i16)]
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone)]
 pub enum TrueType {
     /// Use this number for the attribute.
     Numeric(i16),
@@ -385,7 +385,7 @@ impl TrueType {
 }
 
 #[repr(i16)]
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone)]
 pub enum Collate {
     /// Use this number for the attribute.
     Numeric(i16) = -1,
