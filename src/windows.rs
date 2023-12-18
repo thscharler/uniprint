@@ -80,6 +80,7 @@ use windows_sys::Win32::System::Diagnostics::Debug::{
 
 use crate::{JobParam, PrintError, Status};
 
+/// Data format.
 #[derive(Default, Debug, Clone, Copy)]
 pub enum Format {
     #[default]
@@ -98,6 +99,7 @@ pub enum Format {
 #[repr(u32)]
 #[derive(Default, Debug, Clone, Copy)]
 pub enum PaperSize {
+    /// Use this number for the attribute.
     Numeric(i16),
     #[default]
     Letter = DMPAPER_LETTER,
@@ -233,6 +235,7 @@ impl PaperSize {
 #[repr(u32)]
 #[derive(Default, Debug, Clone, Copy)]
 pub enum PaperSource {
+    /// Use this number for the attribute.
     Numeric(i16),
     Upper = DMBIN_UPPER,
     Lower = DMBIN_LOWER,
@@ -263,6 +266,7 @@ impl PaperSource {
 #[repr(u32)]
 #[derive(Default, Debug, Clone, Copy)]
 pub enum PaperType {
+    /// Use this number for the attribute.
     Numeric(u32),
     Glossy = DMMEDIA_GLOSSY,
     #[default]
@@ -283,6 +287,7 @@ impl PaperType {
 #[repr(u32)]
 #[derive(Default, Debug, Clone, Copy)]
 pub enum Orientation {
+    /// Use this number for the attribute.
     Numeric(i16),
     #[default]
     Portrait = DMORIENT_PORTRAIT,
@@ -301,6 +306,7 @@ impl Orientation {
 #[repr(i16)]
 #[derive(Default, Debug, Clone, Copy)]
 pub enum ColorMode {
+    /// Use this number for the attribute.
     Numeric(i16),
     #[default]
     Monochrome = DMCOLOR_MONOCHROME,
@@ -319,6 +325,7 @@ impl ColorMode {
 #[repr(i32)]
 #[derive(Default, Debug, Clone, Copy)]
 pub enum Quality {
+    /// Use this number for the attribute.
     Numeric(i16),
     Draft = DMRES_DRAFT,
     Low = DMRES_LOW,
@@ -339,6 +346,7 @@ impl Quality {
 #[repr(i16)]
 #[derive(Default, Debug, Clone, Copy)]
 pub enum Duplex {
+    /// Use this number for the attribute.
     Numeric(i16),
     #[default]
     Simplex = DMDUP_SIMPLEX,
@@ -358,6 +366,7 @@ impl Duplex {
 #[repr(i16)]
 #[derive(Default, Debug, Clone, Copy)]
 pub enum TrueType {
+    /// Use this number for the attribute.
     Numeric(i16),
     Bitmap = DMTT_BITMAP,
     Download = DMTT_DOWNLOAD,
@@ -378,6 +387,7 @@ impl TrueType {
 #[repr(i16)]
 #[derive(Default, Debug, Clone, Copy)]
 pub enum Collate {
+    /// Use this number for the attribute.
     Numeric(i16) = -1,
     #[default]
     CollateFalse = DMCOLLATE_FALSE,
@@ -467,6 +477,9 @@ pub fn default_printer() -> std::io::Result<String> {
     }
 }
 
+/// Printer status and settings.
+///
+/// see <https://learn.microsoft.com/en-us/windows/win32/printdocs/printer-info-2>
 #[non_exhaustive]
 #[derive(Default, Debug, Clone)]
 pub struct Info {
@@ -889,7 +902,9 @@ pub fn list_printers() -> std::io::Result<Vec<String>> {
     Ok(r)
 }
 
-/// Printjob data.
+/// Printjob.
+///
+/// see <https://learn.microsoft.com/en-us/windows/win32/printdocs/printing-and-print-spooler-reference>
 #[derive(Clone, Debug)]
 pub struct WindowsPrintJob {
     pub printer: HANDLE,

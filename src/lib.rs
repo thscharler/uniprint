@@ -1,3 +1,10 @@
+//! Tries to give a somewhat unified view over windows and cups printing.
+//!
+//! This is a impossible job, but listing printers and sending raw data
+//! can be accomplished.
+//!
+//! For the rest: State and parameters are available, but system specific.
+//!
 use std::error::Error;
 use std::ffi::NulError;
 use std::fmt::{Display, Formatter};
@@ -7,31 +14,20 @@ use std::num::ParseIntError;
 #[cfg(target_os = "linux")]
 pub use linux::{
     default_printer, list_printers, printer_attr, ColorMode, Duplex, Finishings, Format, Info,
-    Orientation, PaperSize, PaperSource, PaperType, Quality,
+    LinuxPrintJob as PrintJob, Orientation, PaperSize, PaperSource, PaperType, Quality,
 };
 #[cfg(target_os = "windows")]
 pub use windows::{
     default_printer, list_printers, printer_attr, Collate, ColorMode, Duplex, Format, Info,
-    Orientation, PaperSize, PaperSource, PaperType, Quality, TrueType,
+    Orientation, PaperSize, PaperSource, PaperType, Quality, TrueType, WindowsPrintJob as PrintJob,
 };
 
+/// Maps the system specific states to these basic flags.
 pub enum Status {
-    /// CUPS: printer-state=3
-    /// WIN: no status bit set
     Idle,
-    /// CUPS: printer-state=4
-    /// WIN: PRINTER_STATUS_BUSY
     Busy,
-    /// CUPS: printer-state=5
-    /// WIN: PRINTER_STATUS_OFFLINE, PRINTER_STATUS_NOT_AVAILABLE
     Stopped,
-    /// CUPS: printer-state=5
-    ///     printer-state-reasons: ...
-    /// WIN: ...
     Warn,
-    /// CUPS: printer-state=5
-    ///     printer-state-reasons: ...
-    /// WIN: ...
     Error,
 }
 
@@ -63,8 +59,15 @@ pub trait Driver: Write {
     fn close(&mut self) -> std::io::Result<()>;
 }
 
+/// Job parameters.
+///
+/// Partly unifies the parameter names, and tries to sync the value-enums
+/// so that the same values have the same name in both systems.
+/// But it will provide all documented values for each system and an
+/// additional escape hatch for undocumented values.
 #[derive(Default, Clone, Debug)]
 pub struct JobParam {
+    /// Output format.
     pub data_format: Format,
     pub copies: Option<u32>,
     #[cfg(target_os = "linux")]

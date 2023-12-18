@@ -1,10 +1,3 @@
-//!
-//!
-//! References:
-//! https://www.rfc-editor.org/rfc/rfc8011
-//! https://www.cups.org
-//! https://stackoverflow.com/questions/44687154/more-complete-list-of-cups-printer-state-reasons
-
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::io::{ErrorKind, Write};
 use std::ptr::{self, slice_from_raw_parts};
@@ -80,6 +73,7 @@ pub fn default_printer() -> std::io::Result<String> {
     }
 }
 
+/// Data format.
 #[derive(Default, Debug, Clone, Copy)]
 pub enum Format {
     #[default]
@@ -192,6 +186,11 @@ pub enum PrinterState {
     Stopped,
 }
 
+/// Printer status and settings.
+///
+/// <https://www.rfc-editor.org/rfc/rfc8011>
+/// <https://www.cups.org>
+/// <https://stackoverflow.com/questions/44687154/more-complete-list-of-cups-printer-state-reasons>
 #[non_exhaustive]
 #[derive(Default, Debug, Clone)]
 pub struct Info {
