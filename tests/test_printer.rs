@@ -30,8 +30,24 @@ fn test_default() {
 }
 
 #[test]
-fn test_print2() -> std::io::Result<()> {
+fn test_print3() -> std::io::Result<()> {
+    let mut param = JobParam::default();
+    param.data_format = Format::Text;
+    param.copies = Some(2);
+    param.orientation = Some(Orientation::Landscape);
+    param.duplex = Some(Duplex::Simplex);
 
+    let mut pj = PrintJob::new_with("PGL2150", "Document 3", &param)?;
+
+    pj.start_page()?;
+    pj.write(b"test2223\n")?;
+    pj.close()?;
+
+    Ok(())
+}
+
+#[test]
+fn test_print2() -> std::io::Result<()> {
     let mut param = JobParam::default();
     param.data_format = Format::Text;
     param.copies = Some(2);

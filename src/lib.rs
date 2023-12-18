@@ -6,11 +6,14 @@ use std::num::ParseIntError;
 
 #[cfg(target_os = "linux")]
 pub use linux::{
-    default_printer, list_printers, printer_attr, ColorMode, Duplex, Finishings, Info, Orientation,
-    PaperSize, PaperSource, PaperType, Quality, Format 
+    default_printer, list_printers, printer_attr, ColorMode, Duplex, Finishings, Format, Info,
+    Orientation, PaperSize, PaperSource, PaperType, Quality,
 };
 #[cfg(target_os = "windows")]
-pub use windows::{default_printer, list_printers, printer_attr, Info};
+pub use windows::{
+    default_printer, list_printers, printer_attr, Collate, ColorMode, Duplex, Format, Info,
+    Orientation, PaperSize, PaperSource, PaperType, Quality, TrueType,
+};
 
 pub enum Status {
     /// CUPS: printer-state=3
@@ -57,17 +60,35 @@ pub trait Driver: Write {
 
 #[derive(Default, Clone, Debug)]
 pub struct JobParam {
-    pub data_format: Format, 
+    pub data_format: Format,
     pub copies: Option<u32>,
+    #[cfg(target_os = "linux")]
     pub finishings: Option<Finishings>,
     pub paper_size: Option<PaperSize>,
     pub paper_source: Option<PaperSource>,
     pub paper_type: Option<PaperType>,
+    #[cfg(target_os = "linux")]
     pub number_up: Option<u32>,
     pub orientation: Option<Orientation>,
     pub color: Option<ColorMode>,
     pub quality: Option<Quality>,
     pub duplex: Option<Duplex>,
+    /// Length in 1/10mm
+    #[cfg(target_os = "windows")]
+    pub paper_length: Option<i16>,
+    /// Width in 1/10mm
+    #[cfg(target_os = "windows")]
+    pub paper_width: Option<i16>,
+    /// Scale in scale/100
+    #[cfg(target_os = "windows")]
+    pub scale: Option<i16>,
+    /// DPI
+    #[cfg(target_os = "windows")]
+    pub y_resolution: Option<i16>,
+    #[cfg(target_os = "windows")]
+    pub tt_option: Option<TrueType>,
+    #[cfg(target_os = "windows")]
+    pub collate: Option<Collate>,
 }
 
 /// Abstracts the PrintJob.
@@ -94,7 +115,6 @@ pub trait Job: Write {
 pub struct PrintJob {
     #[cfg(target_os = "windows")]
     job: windows::WindowsPrintJob,
-
     #[cfg(target_os = "linux")]
     job: linux::LinuxPrintJob,
 }
