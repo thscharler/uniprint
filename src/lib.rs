@@ -7,7 +7,7 @@ use std::num::ParseIntError;
 #[cfg(target_os = "linux")]
 pub use linux::{
     default_printer, list_printers, printer_attr, ColorMode, Duplex, Finishings, Info, Orientation,
-    PaperSize, PaperSource, PaperType, Quality,
+    PaperSize, PaperSource, PaperType, Quality, Format 
 };
 #[cfg(target_os = "windows")]
 pub use windows::{default_printer, list_printers, printer_attr, Info};
@@ -57,6 +57,7 @@ pub trait Driver: Write {
 
 #[derive(Default, Clone, Debug)]
 pub struct JobParam {
+    pub data_format: Format, 
     pub copies: Option<u32>,
     pub finishings: Option<Finishings>,
     pub paper_size: Option<PaperSize>,

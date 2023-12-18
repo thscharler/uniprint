@@ -15,15 +15,23 @@ use cups_sys::{
     cupsGetNamedDest, cupsLastErrorString, cupsStartDocument, cupsWriteRequestData, CUPS_COPIES,
     CUPS_FINISHINGS, CUPS_FINISHINGS_BIND, CUPS_FINISHINGS_COVER, CUPS_FINISHINGS_FOLD,
     CUPS_FINISHINGS_NONE, CUPS_FINISHINGS_PUNCH, CUPS_FINISHINGS_STAPLE, CUPS_FINISHINGS_TRIM,
+    CUPS_MEDIA_SOURCE, CUPS_MEDIA_SOURCE_AUTO, CUPS_MEDIA_SOURCE_MANUAL, CUPS_MEDIA_TYPE,
+    CUPS_MEDIA_TYPE_AUTO, CUPS_MEDIA_TYPE_ENVELOPE, CUPS_MEDIA_TYPE_LABELS,
+    CUPS_MEDIA_TYPE_LETTERHEAD, CUPS_MEDIA_TYPE_PHOTO, CUPS_MEDIA_TYPE_PHOTO_GLOSSY,
+    CUPS_MEDIA_TYPE_PHOTO_MATTE, CUPS_MEDIA_TYPE_PLAIN, CUPS_MEDIA_TYPE_TRANSPARENCY,
+    CUPS_NUMBER_UP, CUPS_ORIENTATION, CUPS_ORIENTATION_LANDSCAPE, CUPS_PRINT_COLOR_MODE,
+    CUPS_PRINT_COLOR_MODE_AUTO, CUPS_PRINT_COLOR_MODE_COLOR, CUPS_PRINT_COLOR_MODE_MONOCHROME,
+    CUPS_PRINT_QUALITY, CUPS_PRINT_QUALITY_DRAFT, CUPS_PRINT_QUALITY_HIGH,
+    CUPS_PRINT_QUALITY_NORMAL, CUPS_SIDES, CUPS_SIDES_ONE_SIDED, CUPS_SIDES_TWO_SIDED_LANDSCAPE,
+    CUPS_SIDES_TWO_SIDED_PORTRAIT, CUPS_FORMAT_COMMAND, CUPS_FORMAT_TEXT, CUPS_FORMAT_AUTO, CUPS_FORMAT_JPEG, CUPS_FORMAT_PDF, CUPS_FORMAT_POSTSCRIPT,
 };
 use cups_sys::{cups_dest_t, cups_option_t};
 use cups_sys::{
     http_status_e_HTTP_STATUS_CONTINUE as HTTP_STATUS_CONTINUE, http_t,
-    ipp_status_e_IPP_STATUS_OK as IPP_STATUS_OK, CUPS_FORMAT_RAW, CUPS_MEDIA_3X5, CUPS_MEDIA_4X6,
-    CUPS_MEDIA_5X7, CUPS_MEDIA_8X10, CUPS_MEDIA_A3, CUPS_MEDIA_A4, CUPS_MEDIA_A5, CUPS_MEDIA_A6,
-    CUPS_MEDIA_ENV10, CUPS_MEDIA_ENVDL, CUPS_MEDIA_LEGAL, CUPS_MEDIA_LETTER, CUPS_MEDIA_PHOTO_L,
-    CUPS_MEDIA_SUPERBA3, CUPS_MEDIA_TABLOID,
-    CUPS_MEDIA
+    ipp_status_e_IPP_STATUS_OK as IPP_STATUS_OK, CUPS_FORMAT_RAW, CUPS_MEDIA, CUPS_MEDIA_3X5,
+    CUPS_MEDIA_4X6, CUPS_MEDIA_5X7, CUPS_MEDIA_8X10, CUPS_MEDIA_A3, CUPS_MEDIA_A4, CUPS_MEDIA_A5,
+    CUPS_MEDIA_A6, CUPS_MEDIA_ENV10, CUPS_MEDIA_ENVDL, CUPS_MEDIA_LEGAL, CUPS_MEDIA_LETTER,
+    CUPS_MEDIA_PHOTO_L, CUPS_MEDIA_SUPERBA3, CUPS_MEDIA_TABLOID,
 };
 
 use crate::{JobParam, PrintError};
@@ -69,6 +77,18 @@ pub fn default_printer() -> std::io::Result<String> {
 
         Err(PrintError::io_error(PrintError::NoDefaultPrinter))
     }
+}
+
+#[derive(Default, Debug, Clone, Copy)]
+pub enum Format {
+    #[default]
+    Raw,
+    Auto,
+    Command,
+    Jpeg,
+    Pdf,
+    Postscript,
+    Text
 }
 
 #[derive(Default, Debug, Clone, Copy)]
@@ -592,7 +612,6 @@ impl Drop for LinuxPrintJob {
 }
 
 impl LinuxPrintJob {
-
     /// Starts a printjob.
     pub fn new(pr_name: &str, doc_name: &str) -> std::io::Result<Self> {
         Self::new_with(pr_name, doc_name, &JobParam::default())
@@ -658,7 +677,99 @@ impl LinuxPrintJob {
                     CUPS_MEDIA.as_ptr() as *const c_char,
                     paper_size as *const c_char,
                     num_options,
-                    p_options);
+                    p_options,
+                );
+            }
+            if let Some(paper_source) = param.paper_source {
+                let paper_source = match paper_source {
+                    PaperSource::Auto => CUPS_MEDIA_SOURCE_AUTO.as_ptr(),
+                    PaperSource::Manual => CUPS_MEDIA_SOURCE_MANUAL.as_ptr(),
+                };
+                num_options = cupsAddOption(
+                    CUPS_MEDIA_SOURCE.as_ptr() as *const c_char,
+                    paper_source as *const c_char,
+                    num_options,
+                    p_options,
+                );
+            }
+            if let Some(paper_type) = param.paper_type {
+                let paper_type = match paper_type {
+                    PaperType::Auto => CUPS_MEDIA_TYPE_AUTO.as_ptr(),
+                    PaperType::Envelope => CUPS_MEDIA_TYPE_ENVELOPE.as_ptr(),
+                    PaperType::Labels => CUPS_MEDIA_TYPE_LABELS.as_ptr(),
+                    PaperType::Letterhead => CUPS_MEDIA_TYPE_LETTERHEAD.as_ptr(),
+                    PaperType::Photo => CUPS_MEDIA_TYPE_PHOTO.as_ptr(),
+                    PaperType::PhotoGlossy => CUPS_MEDIA_TYPE_PHOTO_GLOSSY.as_ptr(),
+                    PaperType::PhotoMatte => CUPS_MEDIA_TYPE_PHOTO_MATTE.as_ptr(),
+                    PaperType::Plain => CUPS_MEDIA_TYPE_PLAIN.as_ptr(),
+                    PaperType::Transparency => CUPS_MEDIA_TYPE_TRANSPARENCY.as_ptr(),
+                };
+                num_options = cupsAddOption(
+                    CUPS_MEDIA_TYPE.as_ptr() as *const c_char,
+                    paper_type as *const c_char,
+                    num_options,
+                    p_options,
+                );
+            }
+            if let Some(number_up) = param.number_up {
+                let number_up = CString::new(number_up.to_string())?;
+                num_options = cupsAddOption(
+                    CUPS_NUMBER_UP.as_ptr() as *const c_char,
+                    number_up.as_ptr(),
+                    num_options,
+                    p_options,
+                );
+            }
+            if let Some(orientation) = param.orientation {
+                let orientation = match orientation {
+                    Orientation::Portrait => CUPS_ORIENTATION_LANDSCAPE.as_ptr(),
+                    Orientation::Landscape => CUPS_ORIENTATION_LANDSCAPE.as_ptr(),
+                };
+                num_options = cupsAddOption(
+                    CUPS_ORIENTATION.as_ptr() as *const c_char,
+                    orientation as *const c_char,
+                    num_options,
+                    p_options,
+                );
+            }
+            if let Some(color) = param.color {
+                let color = match color {
+                    ColorMode::Auto => CUPS_PRINT_COLOR_MODE_AUTO.as_ptr(),
+                    ColorMode::Monochrome => CUPS_PRINT_COLOR_MODE_COLOR.as_ptr(),
+                    ColorMode::Color => CUPS_PRINT_COLOR_MODE_MONOCHROME.as_ptr(),
+                };
+                num_options = cupsAddOption(
+                    CUPS_PRINT_COLOR_MODE.as_ptr() as *const c_char,
+                    color as *const c_char,
+                    num_options,
+                    p_options,
+                );
+            }
+            if let Some(quality) = param.quality {
+                let quality = match quality {
+                    Quality::Draft => CUPS_PRINT_QUALITY_DRAFT.as_ptr(),
+                    Quality::Normal => CUPS_PRINT_QUALITY_NORMAL.as_ptr(),
+                    Quality::High => CUPS_PRINT_QUALITY_HIGH.as_ptr(),
+                };
+                num_options = cupsAddOption(
+                    CUPS_PRINT_QUALITY.as_ptr() as *const c_char,
+                    quality as *const c_char,
+                    num_options,
+                    p_options,
+                );
+            }
+            if let Some(duplex) = param.duplex {
+                let duplex = match duplex {
+                    Duplex::Simplex => CUPS_SIDES_ONE_SIDED.as_ptr(),
+                    Duplex::TwoSidedPortrait => CUPS_SIDES_TWO_SIDED_PORTRAIT.as_ptr(),
+                    Duplex::TwoSidedLandscape => CUPS_SIDES_TWO_SIDED_LANDSCAPE.as_ptr(),
+                };
+                num_options = cupsAddOption(
+                    CUPS_SIDES.as_ptr() as *const c_char,
+                    duplex as *const c_char,
+                    num_options,
+                    p_options,
+                );
             }
 
             job.job_id = cupsCreateJob(
@@ -672,12 +783,22 @@ impl LinuxPrintJob {
                 return Err(PrintError::last_io_error());
             }
 
+            let format = match param.data_format{
+                Format::Raw => CUPS_FORMAT_RAW.as_ptr(),
+                Format::Auto => CUPS_FORMAT_AUTO.as_ptr(),
+                Format::Command => CUPS_FORMAT_COMMAND.as_ptr(),
+                Format::Jpeg => CUPS_FORMAT_JPEG.as_ptr(),
+                Format::Pdf => CUPS_FORMAT_PDF.as_ptr(),
+                Format::Postscript => CUPS_FORMAT_POSTSCRIPT.as_ptr(),
+                Format::Text => CUPS_FORMAT_TEXT.as_ptr(),
+            };
+
             if cupsStartDocument(
                 ptr::null_mut::<http_t>(),
                 job.pr_name.as_ptr().cast(),
                 job.job_id,
                 job.doc_name.as_ptr().cast(),
-                CUPS_FORMAT_RAW.as_ptr().cast(),
+                format as *const c_char,
                 1,
             ) != HTTP_STATUS_CONTINUE
             {
