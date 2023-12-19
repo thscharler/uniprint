@@ -23,6 +23,7 @@ pub use windows::{
 };
 
 /// Maps the system specific states to these basic flags.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum Status {
     Idle,
     Busy,

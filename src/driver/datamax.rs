@@ -8,11 +8,13 @@ const STX: char = '\x02';
 const CR: char = '\x0D';
 
 /// Datamax driver.
+#[derive(Debug)]
 pub struct Datamax {
     pub print: PrintJob,
 }
 
 /// Constants for datamax.
+#[derive(Debug)]
 pub enum Rotate {
     Rotate0,
     Rotate90,
@@ -21,6 +23,7 @@ pub enum Rotate {
 }
 
 /// Constants for datamax.
+#[derive(Debug)]
 pub enum FeedSpeed {
     Speed50mm,
     Speed76mm,
@@ -36,6 +39,7 @@ pub enum FeedSpeed {
 }
 
 /// Constants for datamax.
+#[derive(Debug)]
 pub enum ScaleSize {
     S4,
     S6,

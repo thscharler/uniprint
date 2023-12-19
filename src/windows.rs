@@ -816,7 +816,7 @@ fn copy_info(info: &PRINTER_INFO_2W) -> Info {
 
         if 0 != dev_mode.dmFields & DM_FORMNAME {
             let p_form_name = &dev_mode.dmFormName as *const u16;
-            let len = min(CCHFORMNAME as usize, wcslen(p_form_name) as usize);
+            let len = min(CCHFORMNAME as usize, wcslen(p_form_name));
             let slice = slice_from_raw_parts(p_form_name, len);
             let str = OsString::from_wide(&*slice);
             res.device_form_name = Some(str.to_string_lossy().to_string());
@@ -1027,7 +1027,7 @@ impl WindowsPrintJob {
                 devmode.dmFields |= DM_COPIES;
                 devmode.Anonymous1.Anonymous1.dmCopies = copies as i16;
             }
-            if let Some(paper_size) = param.paper_size {
+            if let Some(paper_size) = param.paper_size.clone() {
                 let paper_size = match paper_size {
                     PaperSize::Numeric(n) => n,
                     _ => paper_size.discriminant() as i16,
@@ -1035,7 +1035,7 @@ impl WindowsPrintJob {
                 devmode.dmFields |= DM_PAPERSIZE;
                 devmode.Anonymous1.Anonymous1.dmPaperSize = paper_size;
             }
-            if let Some(paper_source) = param.paper_source {
+            if let Some(paper_source) = param.paper_source.clone() {
                 let paper_source = match paper_source {
                     PaperSource::Numeric(v) => v,
                     _ => paper_source.discriminant() as i16,
@@ -1043,7 +1043,7 @@ impl WindowsPrintJob {
                 devmode.dmFields |= DM_DEFAULTSOURCE;
                 devmode.Anonymous1.Anonymous1.dmDefaultSource = paper_source;
             }
-            if let Some(paper_type) = param.paper_type {
+            if let Some(paper_type) = param.paper_type.clone() {
                 let paper_type = match paper_type {
                     PaperType::Numeric(v) => v,
                     _ => paper_type.discriminant(),
@@ -1051,7 +1051,7 @@ impl WindowsPrintJob {
                 devmode.dmFields |= DM_MEDIATYPE;
                 devmode.dmMediaType = paper_type;
             }
-            if let Some(orientation) = param.orientation {
+            if let Some(orientation) = param.orientation.clone() {
                 let orientation = match orientation {
                     Orientation::Numeric(v) => v,
                     _ => orientation.discriminant() as i16,
@@ -1059,7 +1059,7 @@ impl WindowsPrintJob {
                 devmode.dmFields |= DM_ORIENTATION;
                 devmode.Anonymous1.Anonymous1.dmOrientation = orientation;
             }
-            if let Some(color) = param.color {
+            if let Some(color) = param.color.clone() {
                 let color = match color {
                     ColorMode::Numeric(v) => v,
                     _ => color.discriminant(),
@@ -1067,7 +1067,7 @@ impl WindowsPrintJob {
                 devmode.dmFields |= DM_COLOR;
                 devmode.dmColor = color;
             }
-            if let Some(quality) = param.quality {
+            if let Some(quality) = param.quality.clone() {
                 let quality = match quality {
                     Quality::Numeric(v) => v,
                     _ => quality.discriminant() as i16,
@@ -1075,7 +1075,7 @@ impl WindowsPrintJob {
                 devmode.dmFields |= DM_PRINTQUALITY;
                 devmode.Anonymous1.Anonymous1.dmPrintQuality = quality;
             }
-            if let Some(duplex) = param.duplex {
+            if let Some(duplex) = param.duplex.clone() {
                 let duplex = match duplex {
                     Duplex::Numeric(v) => v,
                     _ => duplex.discriminant(),
@@ -1099,7 +1099,7 @@ impl WindowsPrintJob {
                 devmode.dmFields |= DM_YRESOLUTION;
                 devmode.dmYResolution = y_resolution;
             }
-            if let Some(tt_option) = param.tt_option {
+            if let Some(tt_option) = param.tt_option.clone() {
                 let tt_option = match tt_option {
                     TrueType::Numeric(v) => v,
                     _ => tt_option.discriminant(),
@@ -1107,7 +1107,7 @@ impl WindowsPrintJob {
                 devmode.dmFields |= DM_TTOPTION;
                 devmode.dmTTOption = tt_option;
             }
-            if let Some(collate) = param.collate {
+            if let Some(collate) = param.collate.clone() {
                 let collate = match collate {
                     Collate::Numeric(v) => v,
                     _ => collate.discriminant(),
