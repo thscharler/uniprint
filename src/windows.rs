@@ -444,7 +444,7 @@ pub fn default_printer() -> io::Result<String> {
             let buf = alloc_zeroed(buf_layout) as *mut wchar_t;
 
             if GetDefaultPrinterW(buf, &mut buf_len as *mut u32) == TRUE {
-                let pr_name = wstr_len_to_string(buf, buf_len as usize);
+                let pr_name = wstr0_len_to_string(buf, buf_len as usize);
                 dealloc(buf as *mut u8, buf_layout);
 
                 Ok(pr_name)
@@ -908,6 +908,11 @@ pub fn list_printers() -> io::Result<Vec<String>> {
     Ok(r)
 }
 
+// EnumPrintProcessors
+// EnumPrintProcessorDatatypes
+// DeviceCapabilitiesA
+// EnumForms
+
 /// Printjob.
 ///
 /// see <https://learn.microsoft.com/en-us/windows/win32/printdocs/printing-and-print-spooler-reference>
@@ -1309,14 +1314,15 @@ unsafe fn wstr_to_string(value: PWSTR) -> String {
 }
 
 /// Create a String from a wchar_t string and a length.
-/// 0-terminated string.
+/// The string is not necessarily 0-terminated, and the given length doesn't include
+/// the 0-terminator.
 ///
 /// Safety
-/// Can be null. Otherwise len must be valid.
+/// Can be null. Otherwise len must be a valid length in *bytes*.
 unsafe fn wstr_len_to_string(value: PWSTR, len: usize) -> String {
     unsafe {
         if !value.is_null() {
-            let slice = slice_from_raw_parts(value, len);
+            let slice = slice_from_raw_parts(value, len / size_of::<wchar_t>());
             let os_str = OsString::from_wide(&*slice);
             os_str.to_string_lossy().to_string()
         } else {
@@ -1324,3 +1330,49 @@ unsafe fn wstr_len_to_string(value: PWSTR, len: usize) -> String {
         }
     }
 }
+
+/// Create a String from a wchar_t string and a length.
+/// 0-terminated string.
+///
+/// Safety
+/// Can be null. Otherwise len must be a valid length in *bytes*.
+unsafe fn wstr0_len_to_string(value: PWSTR, len: usize) -> String {
+    unsafe {
+        if !value.is_null() {
+            let slice = slice_from_raw_parts(value, (len / size_of::<wchar_t>()) - 1);
+            let os_str = OsString::from_wide(&*slice);
+            os_str.to_string_lossy().to_string()
+        } else {
+            String::default()
+        }
+    }
+}
+
+// /// Create a Vec of String from a MULTI_SZ string.
+// /// A list of strings terminated with an empty string.
+// ///
+// /// Safety
+// /// len must be valid.
+// unsafe fn wstr_len_to_string_vec(value: PWSTR, len: usize) -> Vec<String> {
+//     let mut res = Vec::new();
+//
+//     unsafe {
+//         let mut s = 0;
+//         for i in 0..(len - 1) as isize {
+//             if *value.offset(i) == 0 {
+//                 let slice = slice_from_raw_parts(value.offset(s), (i - s) as usize);
+//                 let os_str = OsString::from_wide(&*slice);
+//                 res.push(os_str.to_string_lossy().to_string());
+//
+//                 // might end early with an empty string.
+//                 if *value.offset(i + 1) == 0 {
+//                     break;
+//                 }
+//
+//                 s = i + 1;
+//             }
+//         }
+//     }
+//
+//     res
+// }

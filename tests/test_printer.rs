@@ -11,7 +11,7 @@ fn test_list() {
 
 #[test]
 fn test_attr() {
-    println!("listing printers");
+    println!("listing attr");
     if let Ok(v) = list_printers() {
         for p in v {
             let v = printer_attr(p.as_str());
