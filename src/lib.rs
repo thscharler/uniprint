@@ -5,6 +5,7 @@
 //!
 //! For the rest: State and parameters are available, but system specific.
 //!
+use std::alloc::LayoutError;
 use std::error::Error;
 use std::ffi::NulError;
 use std::fmt::{Display, Formatter};
@@ -47,6 +48,7 @@ pub trait Driver: Write {
     fn new(pr_name: &str, doc_name: &str) -> std::io::Result<Self>
     where
         Self: Sized;
+
     /// Create a new printjob.
     fn new_with(pr_name: &str, doc_name: &str, param: &JobParam) -> std::io::Result<Self>
     where
@@ -109,8 +111,12 @@ pub enum PrintError {
     NotFound,
     /// No default printer.
     NoDefaultPrinter,
+    /// Already working on a document.
+    DocumentOpen,
     /// C string conversion error.
     InteriorNulInCStr,
+    /// Memory layout error.
+    LayoutError,
     /// ParseIntError
     ParseIntError,
 }
@@ -125,6 +131,8 @@ impl Display for PrintError {
             PrintError::NoDefaultPrinter => write!(f, "No default printer."),
             PrintError::InteriorNulInCStr => write!(f, "Invalid NUL found."),
             PrintError::ParseIntError => write!(f, "Parse int error."),
+            PrintError::DocumentOpen => write!(f, "Document already open."),
+            PrintError::LayoutError => write!(f, "Can't create memory layout."),
         }
     }
 }
@@ -132,6 +140,12 @@ impl Display for PrintError {
 impl From<NulError> for PrintError {
     fn from(_: NulError) -> Self {
         PrintError::InteriorNulInCStr
+    }
+}
+
+impl From<LayoutError> for PrintError {
+    fn from(_: LayoutError) -> Self {
+        PrintError::LayoutError
     }
 }
 

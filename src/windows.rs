@@ -1,14 +1,13 @@
 use std::alloc::{alloc_zeroed, dealloc, Layout};
-use std::cmp::min;
 use std::ffi::{c_void, OsString};
-use std::io::{ErrorKind, Write};
+use std::io::{self, ErrorKind, Write};
 use std::iter::once;
 use std::mem::{align_of, size_of};
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::ptr;
 use std::ptr::slice_from_raw_parts;
 
-use libc::wcslen;
+use libc::{wchar_t, wcslen};
 use windows_sys::core::{PCWSTR, PWSTR};
 use windows_sys::Win32::Foundation::{GetLastError, LocalFree, FALSE, HANDLE, HLOCAL, TRUE};
 use windows_sys::Win32::Graphics::Gdi::{
@@ -404,24 +403,15 @@ impl Collate {
 }
 
 impl PrintError {
-    #[allow(dead_code)]
-    pub(crate) fn io_error(e: PrintError) -> std::io::Error {
-        std::io::Error::new(ErrorKind::Other, e)
-    }
-
-    pub(crate) fn last_io_error() -> std::io::Error {
-        std::io::Error::new(ErrorKind::Other, PrintError::last_error())
-    }
-
     /// Fetch and format the last error.
-    pub(crate) fn last_error() -> Self {
+    pub(crate) fn last_error() -> io::Error {
         unsafe {
             let last_err = GetLastError();
 
             let mut msg: PWSTR = ptr::null_mut();
             // the api misuses a pointer as an out-pointer. (* instead of **).
             // we construct a pointer to the storage location of msg and cast it to PWSTR.
-            let p_msg = ((&mut msg) as *mut *mut u16) as PWSTR;
+            let p_msg = ((&mut msg) as *mut *mut wchar_t) as PWSTR;
 
             let msg_len = FormatMessageW(
                 FORMAT_MESSAGE_FROM_SYSTEM
@@ -435,41 +425,33 @@ impl PrintError {
                 ptr::null_mut(), // args: none
             );
 
-            // Construct a slice from the returned message buffer.
-            let s_msg = slice_from_raw_parts(msg, msg_len as usize);
-            let os_msg = OsString::from_wide(&*s_msg);
-
-            let err = Self::Print(os_msg.to_string_lossy().to_string());
+            let err = Self::Print(wstr_len_to_string(msg, msg_len as usize));
 
             LocalFree(msg as HLOCAL);
 
-            err
+            io::Error::new(ErrorKind::Other, err)
         }
     }
 }
 
 /// Default printer.
-pub fn default_printer() -> std::io::Result<String> {
+pub fn default_printer() -> io::Result<String> {
     unsafe {
         let mut buf_len = 0u32;
         if GetDefaultPrinterW(ptr::null_mut(), &mut buf_len as *mut u32) == FALSE {
-            let buf_layout = Layout::from_size_align_unchecked(buf_len as usize, align_of::<u16>());
-            let buf = alloc_zeroed(buf_layout) as *mut u16;
+            let buf_layout =
+                Layout::from_size_align_unchecked(buf_len as usize, align_of::<wchar_t>());
+            let buf = alloc_zeroed(buf_layout) as *mut wchar_t;
 
             if GetDefaultPrinterW(buf, &mut buf_len as *mut u32) == TRUE {
-                let os_buf = OsString::from_wide(&*slice_from_raw_parts(buf, buf_len as usize));
-                let pr_name = os_buf.to_string_lossy().to_string();
-
+                let pr_name = wstr_len_to_string(buf, buf_len as usize);
                 dealloc(buf as *mut u8, buf_layout);
 
                 Ok(pr_name)
             } else {
                 dealloc(buf as *mut u8, buf_layout);
 
-                Err(std::io::Error::new(
-                    ErrorKind::Other,
-                    PrintError::last_error(),
-                ))
+                Err(PrintError::last_error())
             }
         } else {
             unreachable!()
@@ -645,204 +627,239 @@ impl Info {
 }
 
 /// Extended attributes
-pub fn printer_attr(pr_name: &str) -> std::io::Result<Info> {
-    let pr_name = OsString::from(pr_name)
-        .encode_wide()
-        .chain(once(0))
-        .collect::<Vec<u16>>();
+pub fn printer_attr(pr_name: &str) -> io::Result<Info> {
+    let pr_name = str_to_wstr(pr_name);
+    let mut pr_handle = 0;
+    let mut cb_needed = 0u32;
 
     unsafe {
-        let mut pr_handle = 0;
-        let mut cb_needed = 0u32;
-
         if OpenPrinterW(pr_name.as_ptr(), &mut pr_handle as *mut HANDLE, ptr::null()) == 0 {
-            dbg!(0);
-            return Err(PrintError::last_io_error());
+            return Err(PrintError::last_error());
         }
-
-        let result =
-            if GetPrinterW(pr_handle, 2, ptr::null_mut(), 0, &mut cb_needed as *mut u32) == 0 {
-                let info_layout = Layout::from_size_align_unchecked(
-                    cb_needed as usize,
-                    align_of::<PRINTER_INFO_2W>(),
-                );
-                let buf = alloc_zeroed(info_layout);
-
-                let result =
-                    if GetPrinterW(pr_handle, 2, buf, cb_needed, &mut cb_needed as *mut u32) != 0 {
-                        Ok(copy_info(&*(buf as *mut PRINTER_INFO_2W)))
-                    } else {
-                        dbg!(1);
-                        Err(PrintError::last_io_error())
-                    };
-
-                dealloc(buf, info_layout);
-
-                result
-            } else {
-                unreachable!()
-            };
-
-        if ClosePrinter(pr_handle) == FALSE {
-            dbg!(2);
-            return Err(PrintError::last_io_error());
-        }
-
-        result
     }
+    let result = unsafe {
+        if GetPrinterW(pr_handle, 2, ptr::null_mut(), 0, &mut cb_needed as *mut u32) == 0 {
+            let info_layout =
+                Layout::from_size_align(cb_needed as usize, align_of::<PRINTER_INFO_2W>())
+                    .map_err(|_| io::Error::new(ErrorKind::Other, PrintError::LayoutError))?;
+            let buf = alloc_zeroed(info_layout);
+
+            let result =
+                if GetPrinterW(pr_handle, 2, buf, cb_needed, &mut cb_needed as *mut u32) != 0 {
+                    Ok(copy_info(&*(buf as *mut PRINTER_INFO_2W)))
+                } else {
+                    Err(PrintError::last_error())
+                };
+
+            dealloc(buf, info_layout);
+
+            result
+        } else {
+            unreachable!()
+        }
+    };
+
+    unsafe {
+        if ClosePrinter(pr_handle) == FALSE {
+            return Err(PrintError::last_error());
+        }
+    }
+
+    result
 }
 
 fn copy_info(info: &PRINTER_INFO_2W) -> Info {
+    let mut res = Info::default();
+
     unsafe {
-        let mut res = Info::default();
+        res.printer_name = wstr_to_string(info.pPrinterName);
+    }
+    res.printer_uri = if res.server_name.is_empty() {
+        format!("\\\\.\\{}", res.printer_name).to_string()
+    } else {
+        format!("\\\\{}\\{}", res.server_name, res.printer_name).to_string()
+    };
+    res.device_uri = res.port_name.clone();
+    unsafe {
+        res.driver_name = wstr_to_string(info.pDriverName);
+    }
+    unsafe {
+        res.printer_info = wstr_to_string(info.pComment);
+    }
+    unsafe {
+        res.printer_location = wstr_to_string(info.pLocation);
+    }
+    res.job_priority = info.DefaultPriority;
 
-        res.printer_name = extract_wstr(info.pPrinterName);
-        res.printer_uri = if res.server_name.is_empty() {
-            format!("\\\\.\\{}", res.printer_name).to_string()
-        } else {
-            format!("\\\\{}\\{}", res.server_name, res.printer_name).to_string()
-        };
-        res.device_uri = res.port_name.clone();
-        res.driver_name = extract_wstr(info.pDriverName);
-        res.printer_info = extract_wstr(info.pComment);
-        res.printer_location = extract_wstr(info.pLocation);
-        res.job_priority = info.DefaultPriority;
+    unsafe {
+        res.server_name = wstr_to_string(info.pServerName);
+    }
+    unsafe {
+        res.port_name = wstr_to_string(info.pPortName);
+    }
+    unsafe {
+        res.comment = wstr_to_string(info.pComment);
+    }
+    unsafe {
+        res.location = wstr_to_string(info.pLocation);
+    }
+    unsafe {
+        res.sep_file = wstr_to_string(info.pSepFile);
+    }
+    unsafe {
+        res.print_processor = wstr_to_string(info.pPrintProcessor);
+    }
+    unsafe {
+        res.data_type = wstr_to_string(info.pDatatype);
+    }
+    unsafe {
+        res.parameters = wstr_to_string(info.pParameters);
+    }
+    res.start_time = info.StartTime;
+    res.until_time = info.UntilTime;
+    res.jobs = info.cJobs;
+    res.average_ppm = info.AveragePPM;
 
-        res.server_name = extract_wstr(info.pServerName);
-        res.port_name = extract_wstr(info.pPortName);
-        res.comment = extract_wstr(info.pComment);
-        res.location = extract_wstr(info.pLocation);
-        res.sep_file = extract_wstr(info.pSepFile);
-        res.print_processor = extract_wstr(info.pPrintProcessor);
-        res.data_type = extract_wstr(info.pDatatype);
-        res.parameters = extract_wstr(info.pParameters);
-        res.start_time = info.StartTime;
-        res.until_time = info.UntilTime;
-        res.jobs = info.cJobs;
-        res.average_ppm = info.AveragePPM;
+    res.attr_queued = (info.Attributes & PRINTER_ATTRIBUTE_QUEUED) != 0;
+    res.attr_direct = (info.Attributes & PRINTER_ATTRIBUTE_DIRECT) != 0;
+    res.attr_default = (info.Attributes & PRINTER_ATTRIBUTE_DEFAULT) != 0;
+    res.attr_network = (info.Attributes & PRINTER_ATTRIBUTE_NETWORK) != 0;
+    res.attr_shared = (info.Attributes & PRINTER_ATTRIBUTE_SHARED) != 0;
+    res.attr_hidden = (info.Attributes & PRINTER_ATTRIBUTE_HIDDEN) != 0;
+    res.attr_local = (info.Attributes & PRINTER_ATTRIBUTE_LOCAL) != 0;
+    res.attr_enable_devq = (info.Attributes & PRINTER_ATTRIBUTE_ENABLE_DEVQ) != 0;
+    res.attr_keep_printed_jobs = (info.Attributes & PRINTER_ATTRIBUTE_KEEPPRINTEDJOBS) != 0;
+    res.attr_do_complete_first = (info.Attributes & PRINTER_ATTRIBUTE_DO_COMPLETE_FIRST) != 0;
+    res.attr_work_offline = (info.Attributes & PRINTER_ATTRIBUTE_WORK_OFFLINE) != 0;
+    res.attr_enable_bidi = (info.Attributes & PRINTER_ATTRIBUTE_ENABLE_BIDI) != 0;
+    res.attr_raw_only = (info.Attributes & PRINTER_ATTRIBUTE_RAW_ONLY) != 0;
+    res.attr_published = (info.Attributes & PRINTER_ATTRIBUTE_PUBLISHED) != 0;
+    res.attr_fax = (info.Attributes & PRINTER_ATTRIBUTE_FAX) != 0;
+    res.attr_ts = (info.Attributes & PRINTER_ATTRIBUTE_TS) != 0;
+    res.attr_pushed_user = (info.Attributes & PRINTER_ATTRIBUTE_PUSHED_USER) != 0;
+    res.attr_pushed_machine = (info.Attributes & PRINTER_ATTRIBUTE_PUSHED_MACHINE) != 0;
+    res.attr_machine = (info.Attributes & PRINTER_ATTRIBUTE_MACHINE) != 0;
+    res.attr_friendly_name = (info.Attributes & PRINTER_ATTRIBUTE_FRIENDLY_NAME) != 0;
+    res.attr_ts_generic_driver = (info.Attributes & PRINTER_ATTRIBUTE_TS_GENERIC_DRIVER) != 0;
+    res.attr_per_user = (info.Attributes & PRINTER_ATTRIBUTE_PER_USER) != 0;
+    res.attr_enterprise_cloud = (info.Attributes & PRINTER_ATTRIBUTE_ENTERPRISE_CLOUD) != 0;
 
-        res.attr_queued = (info.Attributes & PRINTER_ATTRIBUTE_QUEUED) != 0;
-        res.attr_direct = (info.Attributes & PRINTER_ATTRIBUTE_DIRECT) != 0;
-        res.attr_default = (info.Attributes & PRINTER_ATTRIBUTE_DEFAULT) != 0;
-        res.attr_network = (info.Attributes & PRINTER_ATTRIBUTE_NETWORK) != 0;
-        res.attr_shared = (info.Attributes & PRINTER_ATTRIBUTE_SHARED) != 0;
-        res.attr_hidden = (info.Attributes & PRINTER_ATTRIBUTE_HIDDEN) != 0;
-        res.attr_local = (info.Attributes & PRINTER_ATTRIBUTE_LOCAL) != 0;
-        res.attr_enable_devq = (info.Attributes & PRINTER_ATTRIBUTE_ENABLE_DEVQ) != 0;
-        res.attr_keep_printed_jobs = (info.Attributes & PRINTER_ATTRIBUTE_KEEPPRINTEDJOBS) != 0;
-        res.attr_do_complete_first = (info.Attributes & PRINTER_ATTRIBUTE_DO_COMPLETE_FIRST) != 0;
-        res.attr_work_offline = (info.Attributes & PRINTER_ATTRIBUTE_WORK_OFFLINE) != 0;
-        res.attr_enable_bidi = (info.Attributes & PRINTER_ATTRIBUTE_ENABLE_BIDI) != 0;
-        res.attr_raw_only = (info.Attributes & PRINTER_ATTRIBUTE_RAW_ONLY) != 0;
-        res.attr_published = (info.Attributes & PRINTER_ATTRIBUTE_PUBLISHED) != 0;
-        res.attr_fax = (info.Attributes & PRINTER_ATTRIBUTE_FAX) != 0;
-        res.attr_ts = (info.Attributes & PRINTER_ATTRIBUTE_TS) != 0;
-        res.attr_pushed_user = (info.Attributes & PRINTER_ATTRIBUTE_PUSHED_USER) != 0;
-        res.attr_pushed_machine = (info.Attributes & PRINTER_ATTRIBUTE_PUSHED_MACHINE) != 0;
-        res.attr_machine = (info.Attributes & PRINTER_ATTRIBUTE_MACHINE) != 0;
-        res.attr_friendly_name = (info.Attributes & PRINTER_ATTRIBUTE_FRIENDLY_NAME) != 0;
-        res.attr_ts_generic_driver = (info.Attributes & PRINTER_ATTRIBUTE_TS_GENERIC_DRIVER) != 0;
-        res.attr_per_user = (info.Attributes & PRINTER_ATTRIBUTE_PER_USER) != 0;
-        res.attr_enterprise_cloud = (info.Attributes & PRINTER_ATTRIBUTE_ENTERPRISE_CLOUD) != 0;
+    res.status_busy = (info.Status & PRINTER_STATUS_BUSY) != 0;
+    res.status_door_open = (info.Status & PRINTER_STATUS_DOOR_OPEN) != 0;
+    res.status_error = (info.Status & PRINTER_STATUS_ERROR) != 0;
+    res.status_initializing = (info.Status & PRINTER_STATUS_INITIALIZING) != 0;
+    res.status_io_active = (info.Status & PRINTER_STATUS_IO_ACTIVE) != 0;
+    res.status_manual_feed = (info.Status & PRINTER_STATUS_MANUAL_FEED) != 0;
+    res.status_no_toner = (info.Status & PRINTER_STATUS_NO_TONER) != 0;
+    res.status_not_available = (info.Status & PRINTER_STATUS_NOT_AVAILABLE) != 0;
+    res.status_offline = (info.Status & PRINTER_STATUS_OFFLINE) != 0;
+    res.status_out_of_memory = (info.Status & PRINTER_STATUS_OUT_OF_MEMORY) != 0;
+    res.status_output_bin_full = (info.Status & PRINTER_STATUS_OUTPUT_BIN_FULL) != 0;
+    res.status_page_punt = (info.Status & PRINTER_STATUS_PAGE_PUNT) != 0;
+    res.status_paper_jam = (info.Status & PRINTER_STATUS_PAPER_JAM) != 0;
+    res.status_paper_out = (info.Status & PRINTER_STATUS_PAPER_OUT) != 0;
+    res.status_paper_problem = (info.Status & PRINTER_STATUS_PAPER_PROBLEM) != 0;
+    res.status_paused = (info.Status & PRINTER_STATUS_PAUSED) != 0;
+    res.status_pending_deletion = (info.Status & PRINTER_STATUS_PENDING_DELETION) != 0;
+    res.status_power_save = (info.Status & PRINTER_STATUS_POWER_SAVE) != 0;
+    res.status_printing = (info.Status & PRINTER_STATUS_PRINTING) != 0;
+    res.status_processing = (info.Status & PRINTER_STATUS_PROCESSING) != 0;
+    res.status_server_unknown = (info.Status & PRINTER_STATUS_SERVER_UNKNOWN) != 0;
+    res.status_toner_low = (info.Status & PRINTER_STATUS_TONER_LOW) != 0;
+    res.status_user_intervention = (info.Status & PRINTER_STATUS_USER_INTERVENTION) != 0;
+    res.status_waiting = (info.Status & PRINTER_STATUS_WAITING) != 0;
+    res.status_warming_up = (info.Status & PRINTER_STATUS_WARMING_UP) != 0;
 
-        res.status_busy = (info.Status & PRINTER_STATUS_BUSY) != 0;
-        res.status_door_open = (info.Status & PRINTER_STATUS_DOOR_OPEN) != 0;
-        res.status_error = (info.Status & PRINTER_STATUS_ERROR) != 0;
-        res.status_initializing = (info.Status & PRINTER_STATUS_INITIALIZING) != 0;
-        res.status_io_active = (info.Status & PRINTER_STATUS_IO_ACTIVE) != 0;
-        res.status_manual_feed = (info.Status & PRINTER_STATUS_MANUAL_FEED) != 0;
-        res.status_no_toner = (info.Status & PRINTER_STATUS_NO_TONER) != 0;
-        res.status_not_available = (info.Status & PRINTER_STATUS_NOT_AVAILABLE) != 0;
-        res.status_offline = (info.Status & PRINTER_STATUS_OFFLINE) != 0;
-        res.status_out_of_memory = (info.Status & PRINTER_STATUS_OUT_OF_MEMORY) != 0;
-        res.status_output_bin_full = (info.Status & PRINTER_STATUS_OUTPUT_BIN_FULL) != 0;
-        res.status_page_punt = (info.Status & PRINTER_STATUS_PAGE_PUNT) != 0;
-        res.status_paper_jam = (info.Status & PRINTER_STATUS_PAPER_JAM) != 0;
-        res.status_paper_out = (info.Status & PRINTER_STATUS_PAPER_OUT) != 0;
-        res.status_paper_problem = (info.Status & PRINTER_STATUS_PAPER_PROBLEM) != 0;
-        res.status_paused = (info.Status & PRINTER_STATUS_PAUSED) != 0;
-        res.status_pending_deletion = (info.Status & PRINTER_STATUS_PENDING_DELETION) != 0;
-        res.status_power_save = (info.Status & PRINTER_STATUS_POWER_SAVE) != 0;
-        res.status_printing = (info.Status & PRINTER_STATUS_PRINTING) != 0;
-        res.status_processing = (info.Status & PRINTER_STATUS_PROCESSING) != 0;
-        res.status_server_unknown = (info.Status & PRINTER_STATUS_SERVER_UNKNOWN) != 0;
-        res.status_toner_low = (info.Status & PRINTER_STATUS_TONER_LOW) != 0;
-        res.status_user_intervention = (info.Status & PRINTER_STATUS_USER_INTERVENTION) != 0;
-        res.status_waiting = (info.Status & PRINTER_STATUS_WAITING) != 0;
-        res.status_warming_up = (info.Status & PRINTER_STATUS_WARMING_UP) != 0;
+    let dev_mode = unsafe { &*info.pDevMode };
+    res.device_driver_version = dev_mode.dmDriverVersion;
 
-        let dev_mode = &*info.pDevMode;
-        res.device_driver_version = dev_mode.dmDriverVersion;
-
-        if 0 != dev_mode.dmFields & DM_ORIENTATION {
+    if 0 != dev_mode.dmFields & DM_ORIENTATION {
+        unsafe {
             res.device_orientation = Some(dev_mode.Anonymous1.Anonymous1.dmOrientation);
         }
-        if 0 != dev_mode.dmFields & DM_PAPERSIZE {
+    }
+    if 0 != dev_mode.dmFields & DM_PAPERSIZE {
+        unsafe {
             res.device_paper_size = Some(dev_mode.Anonymous1.Anonymous1.dmPaperSize);
         }
-        if 0 != dev_mode.dmFields & DM_PAPERLENGTH {
+    }
+    if 0 != dev_mode.dmFields & DM_PAPERLENGTH {
+        unsafe {
             res.device_paper_length = Some(dev_mode.Anonymous1.Anonymous1.dmPaperLength);
         }
-        if 0 != dev_mode.dmFields & DM_PAPERWIDTH {
+    }
+    if 0 != dev_mode.dmFields & DM_PAPERWIDTH {
+        unsafe {
             res.device_paper_width = Some(dev_mode.Anonymous1.Anonymous1.dmPaperWidth);
         }
-        if 0 != dev_mode.dmFields & DM_SCALE {
+    }
+    if 0 != dev_mode.dmFields & DM_SCALE {
+        unsafe {
             res.device_paper_scale = Some(dev_mode.Anonymous1.Anonymous1.dmScale);
         }
-        if 0 != dev_mode.dmFields & DM_COPIES {
+    }
+    if 0 != dev_mode.dmFields & DM_COPIES {
+        unsafe {
             res.device_paper_copies = Some(dev_mode.Anonymous1.Anonymous1.dmCopies);
         }
-        if 0 != dev_mode.dmFields & DM_DEFAULTSOURCE {
+    }
+    if 0 != dev_mode.dmFields & DM_DEFAULTSOURCE {
+        unsafe {
             res.device_default_source = Some(dev_mode.Anonymous1.Anonymous1.dmDefaultSource);
         }
-        if 0 != dev_mode.dmFields & DM_PRINTQUALITY {
+    }
+    if 0 != dev_mode.dmFields & DM_PRINTQUALITY {
+        unsafe {
             res.device_print_quality = Some(dev_mode.Anonymous1.Anonymous1.dmPrintQuality);
         }
-        if 0 != dev_mode.dmFields & DM_COLOR {
-            res.device_color = Some(dev_mode.dmColor);
-        }
-        if 0 != dev_mode.dmFields & DM_DUPLEX {
-            res.device_duplex = Some(dev_mode.dmDuplex);
-        }
-        if 0 != dev_mode.dmFields & DM_YRESOLUTION {
-            res.device_y_resolution = Some(dev_mode.dmYResolution);
-        }
-        if 0 != dev_mode.dmFields & DM_TTOPTION {
-            res.device_tt_option = Some(dev_mode.dmTTOption);
-        }
-        if 0 != dev_mode.dmFields & DM_COLLATE {
-            res.device_collate = Some(dev_mode.dmCollate);
-        }
+    }
+    if 0 != dev_mode.dmFields & DM_COLOR {
+        res.device_color = Some(dev_mode.dmColor);
+    }
+    if 0 != dev_mode.dmFields & DM_DUPLEX {
+        res.device_duplex = Some(dev_mode.dmDuplex);
+    }
+    if 0 != dev_mode.dmFields & DM_YRESOLUTION {
+        res.device_y_resolution = Some(dev_mode.dmYResolution);
+    }
+    if 0 != dev_mode.dmFields & DM_TTOPTION {
+        res.device_tt_option = Some(dev_mode.dmTTOption);
+    }
+    if 0 != dev_mode.dmFields & DM_COLLATE {
+        res.device_collate = Some(dev_mode.dmCollate);
+    }
 
-        if 0 != dev_mode.dmFields & DM_FORMNAME {
-            let p_form_name = &dev_mode.dmFormName as *const u16;
-            let len = min(CCHFORMNAME as usize, wcslen(p_form_name));
-            let slice = slice_from_raw_parts(p_form_name, len);
-            let str = OsString::from_wide(&*slice);
-            res.device_form_name = Some(str.to_string_lossy().to_string());
+    if 0 != dev_mode.dmFields & DM_FORMNAME {
+        unsafe {
+            res.device_form_name = Some(wnstr_to_string(
+                dev_mode.dmFormName.as_ptr(),
+                CCHFORMNAME as isize,
+            ));
         }
-        if 0 != dev_mode.dmFields & DM_NUP {
+    }
+    if 0 != dev_mode.dmFields & DM_NUP {
+        unsafe {
             res.device_n_up = Some(dev_mode.Anonymous2.dmNup);
         }
-        if 0 != dev_mode.dmFields & DM_ICMMETHOD {
-            res.device_icm_method = Some(dev_mode.dmICMMethod);
-        }
-        if 0 != dev_mode.dmFields & DM_ICMINTENT {
-            res.device_icm_intent = Some(dev_mode.dmICMIntent);
-        }
-        if 0 != dev_mode.dmFields & DM_MEDIATYPE {
-            res.device_media_type = Some(dev_mode.dmMediaType);
-        }
-        if 0 != dev_mode.dmFields & DM_DITHERTYPE {
-            res.device_dither_type = Some(dev_mode.dmDitherType);
-        }
-
-        res
     }
+    if 0 != dev_mode.dmFields & DM_ICMMETHOD {
+        res.device_icm_method = Some(dev_mode.dmICMMethod);
+    }
+    if 0 != dev_mode.dmFields & DM_ICMINTENT {
+        res.device_icm_intent = Some(dev_mode.dmICMIntent);
+    }
+    if 0 != dev_mode.dmFields & DM_MEDIATYPE {
+        res.device_media_type = Some(dev_mode.dmMediaType);
+    }
+    if 0 != dev_mode.dmFields & DM_DITHERTYPE {
+        res.device_dither_type = Some(dev_mode.dmDitherType);
+    }
+
+    res
 }
 
 /// List local printers.
-pub fn list_printers() -> std::io::Result<Vec<String>> {
+pub fn list_printers() -> io::Result<Vec<String>> {
     let mut r = Vec::new();
 
     unsafe {
@@ -859,10 +876,9 @@ pub fn list_printers() -> std::io::Result<Vec<String>> {
             &mut c_returned as *mut u32, // count of structs
         ) == FALSE
         {
-            let info_layout = Layout::from_size_align_unchecked(
-                cb_needed as usize,
-                align_of::<PRINTER_INFO_4W>(),
-            );
+            let info_layout =
+                Layout::from_size_align(cb_needed as usize, align_of::<PRINTER_INFO_4W>())
+                    .map_err(|_| io::Error::new(ErrorKind::Other, PrintError::LayoutError))?;
             let buf = alloc_zeroed(info_layout);
 
             if EnumPrintersW(
@@ -877,22 +893,12 @@ pub fn list_printers() -> std::io::Result<Vec<String>> {
             {
                 for i in 0..c_returned as isize {
                     let info = &*(buf as *mut PRINTER_INFO_4W).offset(i);
-
-                    let len_name = wcslen(info.pPrinterName);
-                    let slice_name = slice_from_raw_parts(info.pPrinterName, len_name);
-                    let os_name = OsString::from_wide(&*slice_name);
-
-                    r.push(os_name.to_string_lossy().to_string())
+                    r.push(wstr_to_string(info.pPrinterName))
                 }
-
                 dealloc(buf, info_layout);
             } else {
                 dealloc(buf, info_layout);
-
-                return Err(std::io::Error::new(
-                    ErrorKind::Other,
-                    PrintError::last_error(),
-                ));
+                return Err(PrintError::last_error());
             }
         } else {
             unreachable!()
@@ -905,18 +911,19 @@ pub fn list_printers() -> std::io::Result<Vec<String>> {
 /// Printjob.
 ///
 /// see <https://learn.microsoft.com/en-us/windows/win32/printdocs/printing-and-print-spooler-reference>
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct WindowsPrintJob {
-    pub printer: HANDLE,
-    pub job_id: u32,
+    printer: HANDLE,
+    data_format: Vec<wchar_t>,
+    job_id: u32,
 }
 
 impl Write for WindowsPrintJob {
     /// Write data to the printer.
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        unsafe {
-            let mut written = 0u32;
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let mut written = 0u32;
 
+        unsafe {
             if 0 != WritePrinter(
                 self.printer,
                 buf.as_ptr() as *const c_void,
@@ -925,15 +932,12 @@ impl Write for WindowsPrintJob {
             ) {
                 Ok(written as usize)
             } else {
-                Err(std::io::Error::new(
-                    ErrorKind::Other,
-                    PrintError::last_error(),
-                ))
+                Err(PrintError::last_error())
             }
         }
     }
 
-    fn flush(&mut self) -> std::io::Result<()> {
+    fn flush(&mut self) -> io::Result<()> {
         // noop
         Ok(())
     }
@@ -949,274 +953,371 @@ impl Drop for WindowsPrintJob {
 
 impl WindowsPrintJob {
     /// Starts a printjob.
-    pub fn new(pr_name: &str, doc_name: &str) -> Result<WindowsPrintJob, std::io::Error> {
-        Self::new_with(pr_name, doc_name, &JobParam::default())
+    pub fn new(pr_name: &str, doc_name: &str) -> io::Result<Self> {
+        let mut job = Self::open_printer(pr_name, &JobParam::default())?;
+        job.start_doc(doc_name)?;
+        Ok(job)
     }
 
-    pub fn new_with(pr_name: &str, doc_name: &str, param: &JobParam) -> std::io::Result<Self> {
+    pub fn new_with(pr_name: &str, doc_name: &str, param: &JobParam) -> io::Result<Self> {
+        let mut job = Self::open_printer(pr_name, param)?;
+        job.start_doc(doc_name)?;
+        Ok(job)
+    }
+
+    fn open_printer(pr_name: &str, param: &JobParam) -> io::Result<Self> {
         let mut print = WindowsPrintJob {
             printer: 0,
+            data_format: Default::default(),
             job_id: 0,
         };
 
+        let data_format = match param.data_format {
+            Format::Raw => "RAW",
+            Format::RawFFAppended => "RAW [FF appended]",
+            Format::RawFFAuto => "RAW [FF auto]",
+            Format::NtEmf1_003 => "NT EMF 1.003",
+            Format::NtEmf1_006 => "NT EMF 1.006",
+            Format::NtEmf1_007 => "NT EMF 1.007",
+            Format::NtEmf1_008 => "NT EMF 1.008",
+            Format::Text => "TEXT",
+            Format::XpsPass => "XPS_PASS",
+            Format::Xps2Gdi => "XPS2GDI",
+        };
+        print.data_format = str_to_wstr(data_format);
+
+        let pr_name = str_to_wstr(pr_name);
+        let mut devmode = Self::fill_devmode(param);
+
+        let defaults = PRINTER_DEFAULTSW {
+            pDatatype: print.data_format.as_mut_ptr(),
+            pDevMode: &mut devmode as *mut DEVMODEW,
+            DesiredAccess: PRINTER_ACCESS_USE,
+        };
+
         unsafe {
-            let data_format = match param.data_format {
-                Format::Raw => "RAW",
-                Format::RawFFAppended => "RAW [FF appended]",
-                Format::RawFFAuto => "RAW [FF auto]",
-                Format::NtEmf1_003 => "NT EMF 1.003",
-                Format::NtEmf1_006 => "NT EMF 1.006",
-                Format::NtEmf1_007 => "NT EMF 1.007",
-                Format::NtEmf1_008 => "NT EMF 1.008",
-                Format::Text => "TEXT",
-                Format::XpsPass => "XPS_PASS",
-                Format::Xps2Gdi => "XPS2GDI",
-            };
-            let mut data_format = OsString::from(data_format)
-                .encode_wide()
-                .chain(once(0))
-                .collect::<Vec<u16>>();
-
-            let pr_name = OsString::from(pr_name)
-                .encode_wide()
-                .chain(once(0))
-                .collect::<Vec<u16>>();
-
-            let mut devmode = DEVMODEW {
-                dmDeviceName: [0; 32],
-                dmSpecVersion: DM_SPECVERSION as u16,
-                dmDriverVersion: 0,
-                dmSize: size_of::<DEVMODEW>() as u16,
-                dmDriverExtra: 0,
-                dmFields: 0,
-                Anonymous1: DEVMODEW_0 {
-                    Anonymous1: DEVMODEW_0_0 {
-                        dmOrientation: 0,
-                        dmPaperSize: 0,
-                        dmPaperLength: 0,
-                        dmPaperWidth: 0,
-                        dmScale: 0,
-                        dmCopies: 0,
-                        dmDefaultSource: 0,
-                        dmPrintQuality: 0,
-                    },
-                },
-                dmColor: 0,
-                dmDuplex: 0,
-                dmYResolution: 0,
-                dmTTOption: 0,
-                dmCollate: 0,
-                dmFormName: [0; 32],
-                dmLogPixels: 0,
-                dmBitsPerPel: 0,
-                dmPelsWidth: 0,
-                dmPelsHeight: 0,
-                Anonymous2: DEVMODEW_1 { dmNup: 0 },
-                dmDisplayFrequency: 0,
-                dmICMMethod: 0,
-                dmICMIntent: 0,
-                dmMediaType: 0,
-                dmDitherType: 0,
-                dmReserved1: 0,
-                dmReserved2: 0,
-                dmPanningWidth: 0,
-                dmPanningHeight: 0,
-            };
-
-            if let Some(copies) = param.copies {
-                devmode.dmFields |= DM_COPIES;
-                devmode.Anonymous1.Anonymous1.dmCopies = copies as i16;
-            }
-            if let Some(paper_size) = param.paper_size.clone() {
-                let paper_size = match paper_size {
-                    PaperSize::Numeric(n) => n,
-                    _ => paper_size.discriminant() as i16,
-                };
-                devmode.dmFields |= DM_PAPERSIZE;
-                devmode.Anonymous1.Anonymous1.dmPaperSize = paper_size;
-            }
-            if let Some(paper_source) = param.paper_source.clone() {
-                let paper_source = match paper_source {
-                    PaperSource::Numeric(v) => v,
-                    _ => paper_source.discriminant() as i16,
-                };
-                devmode.dmFields |= DM_DEFAULTSOURCE;
-                devmode.Anonymous1.Anonymous1.dmDefaultSource = paper_source;
-            }
-            if let Some(paper_type) = param.paper_type.clone() {
-                let paper_type = match paper_type {
-                    PaperType::Numeric(v) => v,
-                    _ => paper_type.discriminant(),
-                };
-                devmode.dmFields |= DM_MEDIATYPE;
-                devmode.dmMediaType = paper_type;
-            }
-            if let Some(orientation) = param.orientation.clone() {
-                let orientation = match orientation {
-                    Orientation::Numeric(v) => v,
-                    _ => orientation.discriminant() as i16,
-                };
-                devmode.dmFields |= DM_ORIENTATION;
-                devmode.Anonymous1.Anonymous1.dmOrientation = orientation;
-            }
-            if let Some(color) = param.color.clone() {
-                let color = match color {
-                    ColorMode::Numeric(v) => v,
-                    _ => color.discriminant(),
-                };
-                devmode.dmFields |= DM_COLOR;
-                devmode.dmColor = color;
-            }
-            if let Some(quality) = param.quality.clone() {
-                let quality = match quality {
-                    Quality::Numeric(v) => v,
-                    _ => quality.discriminant() as i16,
-                };
-                devmode.dmFields |= DM_PRINTQUALITY;
-                devmode.Anonymous1.Anonymous1.dmPrintQuality = quality;
-            }
-            if let Some(duplex) = param.duplex.clone() {
-                let duplex = match duplex {
-                    Duplex::Numeric(v) => v,
-                    _ => duplex.discriminant(),
-                };
-                devmode.dmFields |= DM_DUPLEX;
-                devmode.dmDuplex = duplex;
-            }
-            if let Some(paper_length) = param.paper_length {
-                devmode.dmFields |= DM_PAPERLENGTH;
-                devmode.Anonymous1.Anonymous1.dmPaperLength = paper_length;
-            }
-            if let Some(paper_width) = param.paper_width {
-                devmode.dmFields |= DM_PAPERWIDTH;
-                devmode.Anonymous1.Anonymous1.dmPaperWidth = paper_width;
-            }
-            if let Some(scale) = param.scale {
-                devmode.dmFields |= DM_SCALE;
-                devmode.Anonymous1.Anonymous1.dmScale = scale;
-            }
-            if let Some(y_resolution) = param.y_resolution {
-                devmode.dmFields |= DM_YRESOLUTION;
-                devmode.dmYResolution = y_resolution;
-            }
-            if let Some(tt_option) = param.tt_option.clone() {
-                let tt_option = match tt_option {
-                    TrueType::Numeric(v) => v,
-                    _ => tt_option.discriminant(),
-                };
-                devmode.dmFields |= DM_TTOPTION;
-                devmode.dmTTOption = tt_option;
-            }
-            if let Some(collate) = param.collate.clone() {
-                let collate = match collate {
-                    Collate::Numeric(v) => v,
-                    _ => collate.discriminant(),
-                };
-                devmode.dmFields |= DM_COLLATE;
-                devmode.dmCollate = collate;
-            }
-
-            let defaults = PRINTER_DEFAULTSW {
-                pDatatype: data_format.as_mut_ptr() as PWSTR,
-                pDevMode: &mut devmode as *mut DEVMODEW,
-                DesiredAccess: PRINTER_ACCESS_USE,
-            };
-
             if 0 != OpenPrinterW(
                 pr_name.as_ptr() as PCWSTR,
                 &mut print.printer as *mut HANDLE,
                 &defaults as *const PRINTER_DEFAULTSW,
             ) {
-                let mut doc_name = OsString::from(doc_name)
-                    .encode_wide()
-                    .chain(once(0))
-                    .collect::<Vec<u16>>();
-                let doc_info = DOC_INFO_1W {
-                    pDocName: doc_name.as_mut_ptr(),
-                    pOutputFile: ptr::null_mut(),
-                    pDatatype: data_format.as_mut_ptr() as PWSTR,
-                };
-
-                print.job_id = StartDocPrinterW(print.printer, 1, &doc_info as *const DOC_INFO_1W);
-                if print.job_id != 0 {
-                    Ok(print)
-                } else {
-                    ClosePrinter(print.printer);
-                    Err(std::io::Error::new(
-                        ErrorKind::Other,
-                        PrintError::last_error(),
-                    ))
-                }
+                Ok(print)
             } else {
-                Err(std::io::Error::new(
-                    ErrorKind::Other,
-                    PrintError::last_error(),
-                ))
+                Err(PrintError::last_error())
             }
         }
     }
 
-    /// Close the printjob.
-    pub fn close(&mut self) -> Result<(), std::io::Error> {
-        unsafe {
-            if self.printer == 0 {
-                return Ok(());
-            }
+    // ? false positive
+    #[allow(unused_unsafe)]
+    fn fill_devmode(param: &JobParam) -> DEVMODEW {
+        let mut devmode = DEVMODEW {
+            dmDeviceName: [0; 32],
+            dmSpecVersion: DM_SPECVERSION as u16,
+            dmDriverVersion: 0,
+            dmSize: size_of::<DEVMODEW>() as u16,
+            dmDriverExtra: 0,
+            dmFields: 0,
+            Anonymous1: DEVMODEW_0 {
+                Anonymous1: DEVMODEW_0_0 {
+                    dmOrientation: 0,
+                    dmPaperSize: 0,
+                    dmPaperLength: 0,
+                    dmPaperWidth: 0,
+                    dmScale: 0,
+                    dmCopies: 0,
+                    dmDefaultSource: 0,
+                    dmPrintQuality: 0,
+                },
+            },
+            dmColor: 0,
+            dmDuplex: 0,
+            dmYResolution: 0,
+            dmTTOption: 0,
+            dmCollate: 0,
+            dmFormName: [0; 32],
+            dmLogPixels: 0,
+            dmBitsPerPel: 0,
+            dmPelsWidth: 0,
+            dmPelsHeight: 0,
+            Anonymous2: DEVMODEW_1 { dmNup: 0 },
+            dmDisplayFrequency: 0,
+            dmICMMethod: 0,
+            dmICMIntent: 0,
+            dmMediaType: 0,
+            dmDitherType: 0,
+            dmReserved1: 0,
+            dmReserved2: 0,
+            dmPanningWidth: 0,
+            dmPanningHeight: 0,
+        };
 
-            if 0 != EndDocPrinter(self.printer) {
-                if 0 != ClosePrinter(self.printer) {
-                    self.printer = 0;
-                    Ok(())
-                } else {
-                    Err(std::io::Error::new(
-                        ErrorKind::Other,
-                        PrintError::last_error(),
-                    ))
-                }
+        if let Some(copies) = param.copies {
+            unsafe {
+                devmode.dmFields |= DM_COPIES;
+                devmode.Anonymous1.Anonymous1.dmCopies = copies as i16;
+            }
+        }
+        if let Some(paper_size) = param.paper_size.clone() {
+            let paper_size = match paper_size {
+                PaperSize::Numeric(n) => n,
+                _ => paper_size.discriminant() as i16,
+            };
+            unsafe {
+                devmode.dmFields |= DM_PAPERSIZE;
+                devmode.Anonymous1.Anonymous1.dmPaperSize = paper_size;
+            }
+        }
+        if let Some(paper_source) = param.paper_source.clone() {
+            let paper_source = match paper_source {
+                PaperSource::Numeric(v) => v,
+                _ => paper_source.discriminant() as i16,
+            };
+            unsafe {
+                devmode.dmFields |= DM_DEFAULTSOURCE;
+                devmode.Anonymous1.Anonymous1.dmDefaultSource = paper_source;
+            }
+        }
+        if let Some(paper_type) = param.paper_type.clone() {
+            let paper_type = match paper_type {
+                PaperType::Numeric(v) => v,
+                _ => paper_type.discriminant(),
+            };
+            devmode.dmFields |= DM_MEDIATYPE;
+            devmode.dmMediaType = paper_type;
+        }
+        if let Some(orientation) = param.orientation.clone() {
+            let orientation = match orientation {
+                Orientation::Numeric(v) => v,
+                _ => orientation.discriminant() as i16,
+            };
+            unsafe {
+                devmode.dmFields |= DM_ORIENTATION;
+                devmode.Anonymous1.Anonymous1.dmOrientation = orientation;
+            }
+        }
+        if let Some(color) = param.color.clone() {
+            let color = match color {
+                ColorMode::Numeric(v) => v,
+                _ => color.discriminant(),
+            };
+            devmode.dmFields |= DM_COLOR;
+            devmode.dmColor = color;
+        }
+        if let Some(quality) = param.quality.clone() {
+            let quality = match quality {
+                Quality::Numeric(v) => v,
+                _ => quality.discriminant() as i16,
+            };
+            unsafe {
+                devmode.dmFields |= DM_PRINTQUALITY;
+                devmode.Anonymous1.Anonymous1.dmPrintQuality = quality;
+            }
+        }
+        if let Some(duplex) = param.duplex.clone() {
+            let duplex = match duplex {
+                Duplex::Numeric(v) => v,
+                _ => duplex.discriminant(),
+            };
+            devmode.dmFields |= DM_DUPLEX;
+            devmode.dmDuplex = duplex;
+        }
+        if let Some(paper_length) = param.paper_length {
+            unsafe {
+                devmode.dmFields |= DM_PAPERLENGTH;
+                devmode.Anonymous1.Anonymous1.dmPaperLength = paper_length;
+            }
+        }
+        if let Some(paper_width) = param.paper_width {
+            unsafe {
+                devmode.dmFields |= DM_PAPERWIDTH;
+                devmode.Anonymous1.Anonymous1.dmPaperWidth = paper_width;
+            }
+        }
+        if let Some(scale) = param.scale {
+            unsafe {
+                devmode.dmFields |= DM_SCALE;
+                devmode.Anonymous1.Anonymous1.dmScale = scale;
+            }
+        }
+        if let Some(y_resolution) = param.y_resolution {
+            devmode.dmFields |= DM_YRESOLUTION;
+            devmode.dmYResolution = y_resolution;
+        }
+        if let Some(tt_option) = param.tt_option.clone() {
+            let tt_option = match tt_option {
+                TrueType::Numeric(v) => v,
+                _ => tt_option.discriminant(),
+            };
+            devmode.dmFields |= DM_TTOPTION;
+            devmode.dmTTOption = tt_option;
+        }
+        if let Some(collate) = param.collate.clone() {
+            let collate = match collate {
+                Collate::Numeric(v) => v,
+                _ => collate.discriminant(),
+            };
+            devmode.dmFields |= DM_COLLATE;
+            devmode.dmCollate = collate;
+        }
+        devmode
+    }
+
+    fn start_doc(&mut self, doc_name: &str) -> io::Result<()> {
+        if self.job_id != 0 {
+            return Err(io::Error::new(ErrorKind::Other, PrintError::DocumentOpen));
+        }
+
+        let mut doc_name = str_to_wstr(doc_name);
+        let doc_info = DOC_INFO_1W {
+            pDocName: doc_name.as_mut_ptr(),
+            pOutputFile: ptr::null_mut(),
+            pDatatype: self.data_format.as_mut_ptr() as PWSTR,
+        };
+
+        unsafe {
+            self.job_id = StartDocPrinterW(self.printer, 1, &doc_info as *const DOC_INFO_1W);
+            if self.job_id != 0 {
+                Ok(())
             } else {
-                Err(std::io::Error::new(
-                    ErrorKind::Other,
-                    PrintError::last_error(),
-                ))
+                Err(PrintError::last_error())
             }
         }
     }
 
     /// Start a new page. More a hint to the spooling system, wherever it
     /// displays a page count.
-    pub fn start_page(&self) -> Result<(), std::io::Error> {
+    pub fn start_page(&self) -> io::Result<()> {
         unsafe {
             if 0 != StartPagePrinter(self.printer) {
                 Ok(())
             } else {
-                Err(std::io::Error::new(
-                    ErrorKind::Other,
-                    PrintError::last_error(),
-                ))
+                Err(PrintError::last_error())
             }
         }
     }
 
     /// End a page.
-    pub fn end_page(&self) -> Result<(), std::io::Error> {
+    pub fn end_page(&self) -> io::Result<()> {
         unsafe {
             if 0 != EndPagePrinter(self.printer) {
                 Ok(())
             } else {
-                Err(std::io::Error::from(ErrorKind::Other))
+                Err(PrintError::last_error())
+            }
+        }
+    }
+
+    /// Close the current printjob
+    pub fn close_doc(&mut self) -> io::Result<()> {
+        unsafe {
+            if self.job_id == 0 {
+                return Ok(());
+            }
+
+            if 0 != EndDocPrinter(self.printer) {
+                Ok(())
+            } else {
+                Err(PrintError::last_error())
+            }
+        }
+    }
+
+    /// Close the printjob and close the printer too.
+    pub fn close(&mut self) -> io::Result<()> {
+        unsafe {
+            self.close_doc()?;
+
+            if self.printer == 0 {
+                return Ok(());
+            }
+            if 0 != ClosePrinter(self.printer) {
+                self.printer = 0;
+                Ok(())
+            } else {
+                Err(PrintError::last_error())
             }
         }
     }
 }
 
-fn extract_wstr(value: PWSTR) -> String {
+/// Length of a wchar_t string with a maximum buffer size.
+///
+/// Safety
+/// Can be null, returns 0 in that case.
+/// Otherwise must point to a 0 terminated string.
+/// n must be valid. Limits the search.
+unsafe fn wcsnlen(value: PCWSTR, n: isize) -> usize {
+    if value.is_null() {
+        return 0;
+    }
+
+    for i in 0..n {
+        unsafe {
+            if *value.offset(i) == 0 {
+                return i as usize;
+            }
+        }
+    }
+
+    n as usize
+}
+
+/// Create 0-terminated wchar_t string.
+fn str_to_wstr(value: &str) -> Vec<wchar_t> {
+    OsString::from(value)
+        .encode_wide()
+        .chain(once(0))
+        .collect::<Vec<wchar_t>>()
+}
+
+/// Create a String from a wchar_t string.
+/// 0-terminated with a maximum buffer size.
+///
+/// Safety
+/// Can be null. Otherwise must point to a 0-terminated string.
+/// n must be valid.
+unsafe fn wnstr_to_string(value: PCWSTR, n: isize) -> String {
+    unsafe {
+        if !value.is_null() {
+            let len = wcsnlen(value, n);
+            let slice = slice_from_raw_parts(value, len);
+            let os_str = OsString::from_wide(&*slice);
+            os_str.to_string_lossy().to_string()
+        } else {
+            String::default()
+        }
+    }
+}
+
+/// Create a String from a wchar_t string.
+/// 0-terminated string.
+///
+/// Safety
+/// Can be null. Otherwise must point to a 0-terminated string.
+unsafe fn wstr_to_string(value: PWSTR) -> String {
     unsafe {
         if !value.is_null() {
             let len = wcslen(value);
             let slice = slice_from_raw_parts(value, len);
-
             let os_str = OsString::from_wide(&*slice);
+            os_str.to_string_lossy().to_string()
+        } else {
+            String::default()
+        }
+    }
+}
 
+/// Create a String from a wchar_t string and a length.
+/// 0-terminated string.
+///
+/// Safety
+/// Can be null. Otherwise len must be valid.
+unsafe fn wstr_len_to_string(value: PWSTR, len: usize) -> String {
+    unsafe {
+        if !value.is_null() {
+            let slice = slice_from_raw_parts(value, len);
+            let os_str = OsString::from_wide(&*slice);
             os_str.to_string_lossy().to_string()
         } else {
             String::default()
