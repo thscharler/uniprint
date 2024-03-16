@@ -11,6 +11,7 @@ const CR: char = '\x0D';
 #[derive(Debug)]
 pub struct Datamax {
     pub print: PrintJob,
+    metric: bool,
 }
 
 /// Constants for datamax.
@@ -55,16 +56,124 @@ pub enum ScaleSize {
     S72,
 }
 
+#[derive(Debug)]
+pub struct TextScale {
+    pub rotate: Rotate,
+    pub hor_expand: u8,
+    pub vert_expand: u8,
+    pub bold: bool,
+    pub size: ScaleSize,
+}
+
+impl Default for TextScale {
+    fn default() -> Self {
+        Self {
+            rotate: Rotate::Rotate0,
+            hor_expand: 1,
+            vert_expand: 1,
+            bold: false,
+            size: ScaleSize::S4,
+        }
+    }
+}
+
+impl TextScale {
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    #[inline]
+    pub fn rotate(mut self, rotate: Rotate) -> Self {
+        self.rotate = rotate;
+        self
+    }
+
+    #[inline]
+    pub fn hor_expand(mut self, expand: u8) -> Self {
+        self.hor_expand = expand;
+        self
+    }
+
+    #[inline]
+    pub fn vert_expand(mut self, expand: u8) -> Self {
+        self.vert_expand = expand;
+        self
+    }
+
+    #[inline]
+    pub fn bold(mut self) -> Self {
+        self.bold = true;
+        self
+    }
+
+    #[inline]
+    pub fn size(mut self, size: ScaleSize) -> Self {
+        self.size = size;
+        self
+    }
+}
+
+#[derive(Debug)]
+pub struct TextSys {
+    pub rotate: Rotate,
+    pub font: u8,
+    pub hor_expand: u8,
+    pub vert_expand: u8,
+}
+
+impl Default for TextSys {
+    fn default() -> Self {
+        Self {
+            rotate: Rotate::Rotate0,
+            font: 0,
+            hor_expand: 1,
+            vert_expand: 1,
+        }
+    }
+}
+
+impl TextSys {
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    #[inline]
+    pub fn rotate(mut self, rotate: Rotate) -> Self {
+        self.rotate = rotate;
+        self
+    }
+
+    #[inline]
+    pub fn font(mut self, font: u8) -> Self {
+        self.font = font;
+        self
+    }
+
+    #[inline]
+    pub fn hor_expand(mut self, expand: u8) -> Self {
+        self.hor_expand = expand;
+        self
+    }
+
+    #[inline]
+    pub fn vert_expand(mut self, expand: u8) -> Self {
+        self.vert_expand = expand;
+        self
+    }
+}
+
 impl Driver for Datamax {
     fn new(pr_name: &str, doc_name: &str) -> std::io::Result<Self> {
         Ok(Self {
             print: PrintJob::new(pr_name, doc_name)?,
+            metric: false,
         })
     }
 
     fn new_with(pr_name: &str, doc_name: &str, param: &JobParam) -> std::io::Result<Self> {
         Ok(Self {
             print: PrintJob::new_with(pr_name, doc_name, param)?,
+            metric: false,
         })
     }
 
@@ -116,6 +225,7 @@ impl Datamax {
 
     /// Set to metric
     pub fn metric(&mut self) -> Result<(), std::io::Error> {
+        self.metric = true;
         write!(self.print, "m")?;
         write!(self.print, "{}", CR)?;
         Ok(())
@@ -187,14 +297,11 @@ impl Datamax {
     /// Text output
     /// font (0..8)
     /// expand (1..24)
-    /// row (0..9999)
-    /// col (0.410)
+    /// row (0..9999) in 0.01" or 0.1 mm if metric()
+    /// col (0.410) in 0.01" or 0.1 mm if metric()
     pub fn text_sys(
         &mut self,
-        rotate: Rotate,
-        font: u8,
-        hor_expand: u8,
-        vert_expand: u8,
+        param: TextSys,
         row_pos: u16,
         col_pos: u16,
         data: &str,
@@ -204,20 +311,20 @@ impl Datamax {
         write!(
             self.print,
             "{:1}",
-            match rotate {
+            match param.rotate {
                 Rotate::Rotate0 => 1,
                 Rotate::Rotate90 => 2,
                 Rotate::Rotate180 => 3,
                 Rotate::Rotate270 => 4,
             }
         )?;
-        write!(self.print, "{:1}", font)?;
-        write!(self.print, "{:1}", expansion(hor_expand))?;
-        write!(self.print, "{:1}", expansion(vert_expand))?;
+        write!(self.print, "{:1}", param.font)?;
+        write!(self.print, "{:1}", expansion(param.hor_expand))?;
+        write!(self.print, "{:1}", expansion(param.vert_expand))?;
         write!(self.print, "000")?;
         write!(self.print, "{:04}", row_pos)?;
         write!(self.print, "{:04}", col_pos)?;
-        self.print.write(data_enc.as_ref())?;
+        self.print.write_all(data_enc.as_ref())?;
         write!(self.print, "{}", CR)?;
         Ok(())
     }
@@ -225,15 +332,16 @@ impl Datamax {
     /// Text output, scaling font.
     /// expand (1..24)
     /// size (4..72pt)
-    /// row (0..9999)
-    /// col (0.410)
+    /// row (0..9999) in 0.01" or 0.1 mm if metric()
+    /// col (0.410) in 0.01" or 0.1 mm if metric()
     pub fn text_scale(
         &mut self,
-        rotate: Rotate,
-        hor_expand: u8,
-        vert_expand: u8,
-        bold: bool,
-        size: ScaleSize,
+        param: TextScale,
+        // rotate: Rotate,
+        // hor_expand: u8,
+        // vert_expand: u8,
+        // bold: bool,
+        // size: ScaleSize,
         row_pos: u16,
         col_pos: u16,
         data: &str,
@@ -243,7 +351,7 @@ impl Datamax {
         write!(
             self.print,
             "{:1}",
-            match rotate {
+            match param.rotate {
                 Rotate::Rotate0 => 1,
                 Rotate::Rotate90 => 2,
                 Rotate::Rotate180 => 3,
@@ -251,15 +359,23 @@ impl Datamax {
             }
         )?;
         write!(self.print, "{:1}", 9)?;
-        write!(self.print, "{:1}", expansion(hor_expand))?;
-        write!(self.print, "{:1}", expansion(vert_expand))?;
-        let bold = if bold { "C" } else { "A" };
-        write!(self.print, "{}{:02}", bold, scale_size(size))?;
+        write!(self.print, "{:1}", expansion(param.hor_expand))?;
+        write!(self.print, "{:1}", expansion(param.vert_expand))?;
+        let bold = if param.bold { "C" } else { "A" };
+        write!(self.print, "{}{:02}", bold, scale_size(param.size))?;
         write!(self.print, "{:04}", row_pos)?;
         write!(self.print, "{:04}", col_pos)?;
-        self.print.write(data_enc.as_ref())?;
+        self.print.write_all(data_enc.as_ref())?;
         write!(self.print, "{}", CR)?;
         Ok(())
+    }
+
+    pub fn mm(&self, width: f32) -> u16 {
+        if self.metric {
+            (width * 10f32) as u16
+        } else {
+            (width / 25.4f32 * 100f32) as u16
+        }
     }
 }
 
@@ -298,8 +414,8 @@ fn scale_size(size: ScaleSize) -> u8 {
 
 fn expansion(expand: u8) -> char {
     match expand {
-        1..=9 => ('0' as u8 + expand) as char,
-        10..=24 => ('@' as u8 + expand) as char,
+        1..=9 => (b'0' + expand) as char,
+        10..=24 => (b'@' + expand) as char,
         _ => '1',
     }
 }
