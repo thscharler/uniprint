@@ -37,7 +37,7 @@ fn test_print3() -> std::io::Result<()> {
     param.orientation = Some(Orientation::Landscape);
     param.duplex = Some(Duplex::Simplex);
 
-    let mut pj = PrintJob::new_with("PGL2150", "Document 3", &param)?;
+    let mut pj = PrintJob::new_with("Olivetti PG L2150 KX", "Document 3", &param)?;
 
     pj.start_page()?;
     pj.write(b"test2223\n")?;
@@ -54,7 +54,7 @@ fn test_print2() -> std::io::Result<()> {
     param.orientation = Some(Orientation::Landscape);
     param.duplex = Some(Duplex::Simplex);
 
-    let mut pj = PrintJob::new_with("PGL2150", "Document 2", &param)?;
+    let mut pj = PrintJob::new_with("Olivetti PG L2150 KX", "Document 2", &param)?;
 
     pj.start_page()?;
     pj.write(b"test2223\n")?;
@@ -67,7 +67,7 @@ fn test_print2() -> std::io::Result<()> {
 fn test_print() -> Result<(), std::io::Error> {
     println!("open");
     // let mut pj = PrintJob::new("Olivetti PG L2150", "Document 1")?;
-    let mut pj = PrintJob::new("PGL2150", "Document 1")?;
+    let mut pj = PrintJob::new("Olivetti PG L2150 KX", "Document 1")?;
     println!("start");
     pj.start_page()?;
     println!("write");
